@@ -25,12 +25,20 @@ A Model Context Protocol (MCP) server for integrating with Goodday project manag
 
 ## Installation
 
-### Prerequisites
+### From PyPI (Recommended)
+
+```bash
+pip install goodday-mcp
+```
+
+### From Source
+
+#### Prerequisites
 - Python 3.10 or higher
-- UV package manager
+- UV package manager (recommended) or pip
 - Goodday API token
 
-### Setup
+#### Setup with UV
 
 1. **Install UV** (if not already installed):
    ```bash
@@ -39,7 +47,7 @@ A Model Context Protocol (MCP) server for integrating with Goodday project manag
 
 2. **Clone and set up the project**:
    ```bash
-   git clone <repository-url>
+   git clone https://github.com/cdmx1/goodday-mcp.git
    cd goodday-mcp
    
    # Create virtual environment and install dependencies
@@ -48,10 +56,20 @@ A Model Context Protocol (MCP) server for integrating with Goodday project manag
    uv sync
    ```
 
-3. **Set up environment variables**:
-   Create a `.env` file in the project root:
+#### Setup with pip
+
+```bash
+git clone https://github.com/cdmx1/goodday-mcp.git
+cd goodday-mcp
+pip install -e .
+```
+
+### Configuration
+
+1. **Set up environment variables**:
+   Create a `.env` file in your project root or export the variable:
    ```bash
-   GOODDAY_API_TOKEN=your_goodday_api_token_here
+   export GOODDAY_API_TOKEN=your_goodday_api_token_here
    ```
 
    To get your Goodday API token:
@@ -62,8 +80,15 @@ A Model Context Protocol (MCP) server for integrating with Goodday project manag
 ## Usage
 
 ### Running the Server Standalone
+
+If installed from PyPI:
 ```bash
-uv run main.py
+goodday-mcp
+```
+
+If running from source with UV:
+```bash
+uv run goodday-mcp
 ```
 
 ### Using with Claude Desktop
@@ -73,17 +98,28 @@ uv run main.py
    - **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
 
 2. **Add the server configuration**:
+
+   **Option A: If installed from PyPI:**
+   ```json
+   {
+     "mcpServers": {
+       "goodday": {
+         "command": "goodday-mcp",
+         "env": {
+           "GOODDAY_API_TOKEN": "your_goodday_api_token_here"
+         }
+       }
+     }
+   }
+   ```
+
+   **Option B: If running from source:**
    ```json
    {
      "mcpServers": {
        "goodday": {
          "command": "uv",
-         "args": [
-           "--directory",
-           "/ABSOLUTE/PATH/TO/goodday-mcp",
-           "run",
-           "main.py"
-         ],
+         "args": ["run", "goodday-mcp"],
          "env": {
            "GOODDAY_API_TOKEN": "your_goodday_api_token_here"
          }
@@ -171,9 +207,12 @@ All errors are returned as descriptive strings to help with troubleshooting.
 ### Project Structure
 ```
 goodday-mcp/
-├── main.py              # Main MCP server implementation
+├── goodday_mcp/         # Main package directory
+│   ├── __init__.py      # Package initialization
+│   └── main.py          # Main MCP server implementation
 ├── pyproject.toml       # Project configuration and dependencies
 ├── README.md           # This file
+├── LICENSE             # MIT license
 ├── uv.lock            # Dependency lock file
 └── .env               # Environment variables (create this)
 ```
@@ -182,7 +221,7 @@ goodday-mcp/
 
 To add new tools to the server:
 
-1. **Add the tool function** using the `@mcp.tool()` decorator:
+1. **Add the tool function** in `goodday_mcp/main.py` using the `@mcp.tool()` decorator:
    ```python
    @mcp.tool()
    async def your_new_tool(param1: str, param2: Optional[int] = None) -> str:
@@ -202,7 +241,11 @@ To add new tools to the server:
 
 Test the server by running it directly:
 ```bash
-uv run main.py
+# If installed from PyPI
+goodday-mcp
+
+# If running from source
+uv run goodday-mcp
 ```
 
 The server will start and wait for MCP protocol messages via stdin/stdout.
