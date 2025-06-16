@@ -1,226 +1,237 @@
-# GoodDay MCP Server
+# Goodday MCP Server
 
-[![PyPI version](https://badge.fury.io/py/goodday-mcp.svg)](https://badge.fury.io/py/goodday-mcp)
-[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+A Model Context Protocol (MCP) server for integrating with Goodday project management platform. This server provides tools for managing projects, tasks, and users through the Goodday API v2.
 
-A Model Context Protocol (MCP) server that integrates with GoodDay work management platform, providing AI assistants with comprehensive project and task management capabilities through GoodDay's API v2.
-
-## 🚀 Features
-
-- **8 comprehensive tools** for complete GoodDay integration
-- **Project Management**: List, view, and create projects
-- **Task Management**: Create, update, and track tasks
-- **User Management**: Assign tasks and track user workloads
-- **Natural Language Interface**: Use with Claude Desktop and other MCP clients
-- **Async/Await Support**: Efficient API calls with proper error handling
-- **Type Safety**: Full type hints for better development experience
-
-## 📦 Installation
-
-### Option 1: Install from PyPI (Recommended)
-```bash
-pip install goodday-mcp
-```
-
-### Option 2: Install with uv
-```bash
-uv add goodday-mcp
-```
-
-### Option 3: From Source
-```bash
-git clone https://github.com/goodday-mcp/goodday-mcp
-cd goodday-mcp
-pip install -e .
-```
-
-## ⚙️ Configuration
-
-### 1. Get Your GoodDay API Token
-
-1. Go to your GoodDay organization
-2. Navigate to **Organization → Settings → API**
-3. Click **"Generate"** to create an API token
-
-### 2. Set Environment Variable
-
-```bash
-export GOODDAY_API_TOKEN="your-api-token-here"
-```
-
-### 3. Configure Your MCP Client
-
-#### Claude Desktop
-
-Add to your `claude_desktop_config.json`:
-
-**Option 1: Using pip installed package**
-```json
-{
-  "mcpServers": {
-    "goodday": {
-      "command": "goodday-mcp",
-      "env": {
-        "GOODDAY_API_TOKEN": "your-api-token-here"
-      }
-    }
-  }
-}
-```
-
-**Option 2: Using uv**
-```json
-{
-  "mcpServers": {
-    "goodday": {
-      "command": "uv",
-      "args": ["run", "goodday-mcp"],
-      "env": {
-        "GOODDAY_API_TOKEN": "your-api-token-here"
-      }
-    }
-  }
-}
-```
-
-#### Other MCP Clients
-
-For other MCP clients, run the server directly:
-
-```bash
-goodday-mcp
-```
-
-## 🛠️ Available Tools
+## Features
 
 ### Project Management
-- **`list_projects`** - List all projects with filtering options (archived, root-only)
-- **`get_project`** - Get detailed information about a specific project  
-- **`create_project`** - Create new projects with full configuration
+- **get_projects**: Retrieve list of projects (with options for archived and root-only filtering)
+- **get_project**: Get detailed information about a specific project
+- **create_project**: Create new projects with customizable templates and settings
+- **get_project_users**: Get users associated with a specific project
 
 ### Task Management
-- **`list_project_tasks`** - List all tasks in a project with filtering
-- **`get_task`** - Get detailed information about a specific task
-- **`create_task`** - Create new tasks with comprehensive options
-- **`update_task_status`** - Update task status with optional comments
-- **`get_user_assigned_tasks`** - Get tasks assigned to a specific user
-
-## 💬 Usage Examples
-
-Once configured with your MCP client, you can use natural language commands:
-
-### Project Queries
-- *"Show me all my active projects"*
-- *"List archived projects only"*
-- *"Get details for project ABC123"*
-
-### Task Management
-- *"Create a new task called 'Review quarterly reports' in the Marketing project"*
-- *"List all tasks in project XYZ456"*
-- *"Show me all overdue tasks"*
-- *"Update task TASK789 status to completed"*
+- **get_project_tasks**: Retrieve tasks from specific projects (with options for closed tasks and subfolders)
+- **get_user_assigned_tasks**: Get tasks assigned to a specific user
+- **get_user_action_required_tasks**: Get action-required tasks for a user
+- **get_task**: Get detailed information about a specific task
+- **create_task**: Create new tasks with full customization (subtasks, assignments, dates, priorities)
+- **update_task_status**: Update task status with optional comments
+- **add_task_comment**: Add comments to tasks
 
 ### User Management
-- *"What tasks are assigned to John Doe?"*
-- *"Show me all my assigned tasks"*
-- *"List tasks that need my attention"*
+- **get_users**: Retrieve list of organization users
+- **get_user**: Get detailed information about a specific user
 
-## 🔧 Development
+## Installation
 
 ### Prerequisites
-
 - Python 3.10 or higher
-- Valid GoodDay API token
-- Internet connection for API access
+- UV package manager
+- Goodday API token
 
-### Local Development
+### Setup
 
-1. Clone the repository:
+1. **Install UV** (if not already installed):
    ```bash
-   git clone https://github.com/goodday-mcp/goodday-mcp
-   cd goodday-mcp
+   curl -LsSf https://astral.sh/uv/install.sh | sh
    ```
 
-2. Install with uv (recommended):
+2. **Clone and set up the project**:
    ```bash
+   git clone <repository-url>
+   cd goodday-mcp
+   
+   # Create virtual environment and install dependencies
+   uv venv
+   source .venv/bin/activate  # On Windows: .venv\Scripts\activate
    uv sync
    ```
 
-3. Set your API token:
+3. **Set up environment variables**:
+   Create a `.env` file in the project root:
    ```bash
-   export GOODDAY_API_TOKEN="your-token"
+   GOODDAY_API_TOKEN=your_goodday_api_token_here
    ```
 
-4. Run the server:
-   ```bash
-   uv run goodday-mcp
+   To get your Goodday API token:
+   - Go to your Goodday organization
+   - Navigate to Settings → API
+   - Click the generate button to create a new token
+
+## Usage
+
+### Running the Server Standalone
+```bash
+uv run main.py
+```
+
+### Using with Claude Desktop
+
+1. **Configure Claude Desktop** by editing your configuration file:
+   - **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
+   - **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
+
+2. **Add the server configuration**:
+   ```json
+   {
+     "mcpServers": {
+       "goodday": {
+         "command": "uv",
+         "args": [
+           "--directory",
+           "/ABSOLUTE/PATH/TO/goodday-mcp",
+           "run",
+           "main.py"
+         ],
+         "env": {
+           "GOODDAY_API_TOKEN": "your_goodday_api_token_here"
+         }
+       }
+     }
+   }
    ```
+
+3. **Restart Claude Desktop** to load the new server.
+
+### Using with Other MCP Clients
+
+The server communicates via stdio transport and can be integrated with any MCP-compatible client. Refer to the [MCP documentation](https://modelcontextprotocol.io/) for client-specific integration instructions.
+
+## API Reference
+
+### Environment Variables
+
+| Variable | Description | Required |
+|----------|-------------|----------|
+| `GOODDAY_API_TOKEN` | Your Goodday API token | Yes |
+
+### Tool Examples
+
+#### Get Projects
+```python
+# Get all active projects
+get_projects()
+
+# Get archived projects
+get_projects(archived=True)
+
+# Get only root-level projects
+get_projects(root_only=True)
+```
+
+#### Create a Task
+```python
+create_task(
+    project_id="project_123",
+    title="Implement new feature",
+    from_user_id="user_456",
+    message="Detailed description of the task",
+    to_user_id="user_789",
+    deadline="2025-06-30",
+    priority=5
+)
+```
+
+#### Update Task Status
+```python
+update_task_status(
+    task_id="task_123",
+    user_id="user_456",
+    status_id="status_completed",
+    message="Task completed successfully"
+)
+```
+
+## Data Formats
+
+### Date Format
+All dates should be provided in `YYYY-MM-DD` format (e.g., `2025-06-16`).
+
+### Priority Levels
+- 1-10: Normal priority levels
+- 50: Blocker
+- 100: Emergency
+
+### Project Colors
+Project colors are specified as integers from 1-24, corresponding to Goodday's color palette.
+
+## Error Handling
+
+The server includes comprehensive error handling:
+- **Authentication errors**: When API token is missing or invalid
+- **Network errors**: When Goodday API is unreachable
+- **Validation errors**: When required parameters are missing
+- **Permission errors**: When user lacks permissions for requested operations
+
+All errors are returned as descriptive strings to help with troubleshooting.
+
+## Development
+
+### Project Structure
+```
+goodday-mcp/
+├── main.py              # Main MCP server implementation
+├── pyproject.toml       # Project configuration and dependencies
+├── README.md           # This file
+├── uv.lock            # Dependency lock file
+└── .env               # Environment variables (create this)
+```
+
+### Adding New Tools
+
+To add new tools to the server:
+
+1. **Add the tool function** using the `@mcp.tool()` decorator:
+   ```python
+   @mcp.tool()
+   async def your_new_tool(param1: str, param2: Optional[int] = None) -> str:
+       """Description of what the tool does.
+       
+       Args:
+           param1: Description of parameter 1
+           param2: Description of optional parameter 2
+       """
+       # Implementation here
+       return "Result"
+   ```
+
+2. **Test the tool** by running the server and testing with an MCP client.
 
 ### Testing
 
+Test the server by running it directly:
 ```bash
-# Test the installation
-goodday-mcp --help
-
-# Test with your API token
-export GOODDAY_API_TOKEN="your-token"
-echo '{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}' | goodday-mcp
+uv run main.py
 ```
 
-## 📋 API Reference
+The server will start and wait for MCP protocol messages via stdin/stdout.
 
-### Tool Parameters
-
-All tools support the standard MCP protocol. Here are the key parameters:
-
-#### Projects
-- `list_projects(archived: bool = False, root_only: bool = False)`
-- `get_project(project_id: str)`
-- `create_project(name: str, created_by_user_id: str, project_template_id: str, ...)`
-
-#### Tasks
-- `list_project_tasks(project_id: str, include_closed: bool = False, include_subfolders: bool = False)`
-- `get_task(task_id: str)`
-- `create_task(project_id: str, title: str, from_user_id: str, ...)`
-- `update_task_status(task_id: str, user_id: str, status_id: str, message: str = None)`
-- `get_user_assigned_tasks(user_id: str, include_closed: bool = False)`
-
-## 🛡️ Security
-
-- All API communications use HTTPS
-- API tokens are handled securely via environment variables
-- No sensitive data is logged or cached
-- Comprehensive input validation on all parameters
-
-See [SECURITY.md](SECURITY.md) for more details.
-
-## 🤝 Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request. For major changes, please open an issue first to discuss what you would like to change.
+## Contributing
 
 1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/AmazingFeature`)
-3. Commit your changes (`git commit -m 'Add some AmazingFeature'`)
-4. Push to the branch (`git push origin feature/AmazingFeature`)
-5. Open a Pull Request
+2. Create a feature branch
+3. Make your changes
+4. Add tests if applicable
+5. Submit a pull request
 
-## 📄 License
+## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the MIT License - see the LICENSE file for details.
 
-## 🔗 Links
+## Support
 
-- **GoodDay API Documentation**: https://www.goodday.work/developers/api-v2
-- **Model Context Protocol**: https://modelcontextprotocol.io/
-- **Claude Desktop**: https://claude.ai/download
+For issues related to:
+- **MCP Server**: Create an issue in this repository
+- **Goodday API**: Refer to [Goodday API documentation](https://www.goodday.work/developers/api-v2)
+- **MCP Protocol**: Refer to [MCP documentation](https://modelcontextprotocol.io/)
 
-## 📞 Support
+## Changelog
 
-- **Issues**: [GitHub Issues](https://github.com/goodday-mcp/goodday-mcp/issues)
-- **Documentation**: [README.md](https://github.com/goodday-mcp/goodday-mcp#readme)
-- **Changelog**: [CHANGELOG.md](CHANGELOG.md)
-
----
-
-**Built with ❤️ for the GoodDay and MCP communities**
+### v1.0.0
+- Initial release
+- Full project management capabilities
+- Task management with comments and status updates
+- User management
+- Comprehensive error handling
+- UV support with modern Python packaging
