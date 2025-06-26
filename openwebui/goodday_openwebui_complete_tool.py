@@ -500,8 +500,45 @@ class Tools:
                         __user__=__user__,
                         __event_emitter__=__event_emitter__
                     )
+            # Pattern: "get messages from TASK-ID" or "messages for TASK-ID"
+            if ("message" in query_lower or "messages" in query_lower) and ("from" in query_lower or "for" in query_lower):
+                # Extract task ID
+                import re
+                task_id_pattern = r'(?:from|for)\s+([A-Z]+-\d+)'
+                task_match = re.search(task_id_pattern, query_lower)
+                if task_match:
+                    task_short_id = task_match.group(1).upper()
+                    return await self.get_goodday_task_messages(
+                        task_short_id=task_short_id,
+                        __request__=__request__,
+                        __user__=__user__,
+                        __event_emitter__=__event_emitter__
+                    )
+
+            # Pattern: "get task TASK-ID" or "task details for TASK-ID" or "details for TASK-ID"
+            if (("task" in query_lower and "detail" in query_lower) or 
+                ("details" in query_lower and ("for" in query_lower or "of" in query_lower)) or
+                ("get task" in query_lower)) and not ("tasks" in query_lower or "message" in query_lower):
+                # Extract task ID
+                import re
+                task_id_patterns = [
+                    r'(?:task|for|of)\s+([A-Z]+-\d+)',
+                    r'([A-Z]+-\d+)',  # Just the task ID pattern
+                ]
+                
+                for pattern in task_id_patterns:
+                    task_match = re.search(pattern, query_lower)
+                    if task_match:
+                        task_short_id = task_match.group(1).upper()
+                        return await self.get_goodday_task_details(
+                            task_short_id=task_short_id,
+                            __request__=__request__,
+                            __user__=__user__,
+                            __event_emitter__=__event_emitter__
+                        )
+
             # Pattern: "USER tasks" (e.g., "Roney Dsilva tasks")
-            if "task" in query_lower and not any(keyword in query_lower for keyword in ["sprint", "spring", "project", "assigned"]):
+            if "task" in query_lower and not any(keyword in query_lower for keyword in ["sprint", "spring", "project", "assigned", "message", "detail"]):
                 user_value = query_lower.replace("tasks", "").replace("task", "").replace("get", "").strip()
                 if user_value:
                     return await self.get_goodday_user_tasks(
@@ -523,6 +560,17 @@ class Tools:
 - "tasks assigned to Roney Dsilva"
 - "Roney Dsilva tasks"
 - "tasks for John Smith"
+
+**Task Messages:**
+- "get messages from RAD-434"
+- "messages for ABC-123"
+- "get all messages from TASK-456"
+
+**Task Details:**
+- "get task RAD-434"
+- "task details for ABC-123"
+- "details for TASK-456"
+- "get details of RAD-434"
 
 **Other Options:**
 - Use specific function names like `get_goodday_projects()` for projects
@@ -608,6 +656,307 @@ Please try rephrasing your query with one of these patterns."""
             return f"**Tasks assigned to '{actual_user_name}':**\n\n{result}"
         except Exception as e:
             error_msg = f"Failed to retrieve user tasks: {str(e)}"
+            if __event_emitter__:
+                await __event_emitter__({
+                    "type": "status",
+                    "data": {"description": error_msg, "done": True},
+                })
+            return error_msg
+
+    async def get_goodday_task_messages(
+        self,
+        task_short_id: str,
+        project_name: str,
+        __request__: Request = None,
+        __user__: dict = None,
+        __event_emitter__: Callable = None
+    ) -> str:
+        """
+        Get messages from a specific task by its short ID (e.g., RAD-434) within a specified project.
+
+        :param task_short_id: The short ID of the task (e.g., RAD-434)
+        :param project_name: The name of the project containing the task (required, case-insensitive)
+        """
+        if __event_emitter__:
+            await __event_emitter__({
+                "type": "status",
+                "data": {"description": f"Finding project '{project_name}'...", "done": False},
+            })
+
+        try:
+            # Get all projects and find the one matching project_name (case-insensitive)
+            projects_data = await self._make_goodday_request("projects")
+            if not projects_data or not isinstance(projects_data, list):
+                return "Unable to fetch projects to search for task."
+            project_name_lower = project_name.lower().strip()
+            matched_project = None
+            for proj in projects_data:
+                if not isinstance(proj, dict):
+                    continue
+                current_project_name = proj.get('name', '').lower().strip()
+                if current_project_name == project_name_lower:
+                    matched_project = proj
+                    break
+                if project_name_lower in current_project_name or current_project_name in project_name_lower:
+                    matched_project = proj
+                    break
+            if not matched_project:
+                available_projects = [p.get('name', 'Unknown') for p in projects_data if isinstance(p, dict)]
+                return f"Project '{project_name}' not found. Available projects: {', '.join(available_projects[:10])}{'...' if len(available_projects) > 10 else ''}"
+            project_id = matched_project.get('id')
+            found_in_project = matched_project.get('name')
+
+            if __event_emitter__:
+                await __event_emitter__({
+                    "type": "status",
+                    "data": {"description": f"Searching for task '{task_short_id}' in project '{found_in_project}'...", "done": False},
+                })
+
+            # Search for the task in the specified project
+            endpoint = f"project/{project_id}/tasks?subfolders=true"
+            tasks_data = await self._make_goodday_request(endpoint)
+            if not tasks_data or not isinstance(tasks_data, list):
+                return f"Unable to fetch tasks for project '{found_in_project}'."
+            task_id = None
+            task_name = None
+            for task in tasks_data:
+                if isinstance(task, dict) and task.get('shortId') == task_short_id:
+                    task_id = task.get('id')
+                    task_name = task.get('name')
+                    break
+            if not task_id:
+                return f"Task with short ID '{task_short_id}' not found in project '{found_in_project}'. Please verify the task ID and project name are correct."
+
+            if __event_emitter__:
+                await __event_emitter__({
+                    "type": "status",
+                    "data": {"description": f"Found task '{task_name}' in project '{found_in_project}', fetching messages...", "done": False},
+                })
+
+            # Now get the messages for this task
+            endpoint = f"task/{task_id}/messages"
+            messages_data = await self._make_goodday_request(endpoint)
+
+            if not messages_data:
+                return f"No messages found for task '{task_short_id}' ({task_name})."
+
+            if isinstance(messages_data, dict) and "error" in messages_data:
+                return f"Unable to fetch task messages: {messages_data.get('error', 'Unknown error')}"
+
+            if not isinstance(messages_data, list):
+                return f"Unexpected response format: {str(messages_data)}"
+
+            if len(messages_data) == 0:
+                return f"Task '{task_short_id}' ({task_name}) has no messages."
+
+            # Get all users for name lookup
+            users_data = await self._make_goodday_request("users")
+            user_id_to_name = {}
+            if isinstance(users_data, list):
+                for u in users_data:
+                    if isinstance(u, dict):
+                        user_id_to_name[u.get("id")] = u.get("name", "Unknown")
+
+            def user_display(user_id):
+                if not user_id:
+                    return "N/A"
+                name = user_id_to_name.get(user_id)
+                return f"{name} ({user_id})" if name else user_id
+
+            # Format the messages
+            formatted_messages = []
+            for msg in messages_data:
+                if not isinstance(msg, dict):
+                    continue
+
+                formatted_msg = f"""
+**Message ID:** {msg.get('id', 'N/A')}
+**Date Created:** {msg.get('dateCreated', 'N/A')}
+**From User:** {user_display(msg.get('fromUserId'))}
+**To User:** {user_display(msg.get('toUserId'))}
+**Message:** {msg.get('message', 'No message content')}
+**Task Status ID:** {msg.get('taskStatusId', 'N/A')}
+**Time Report ID:** {msg.get('timeReportId', 'N/A')}
+**Edit By User:** {user_display(msg.get('editByUserId'))}
+**Edit Date:** {msg.get('editDate', 'N/A')}
+""".strip()
+                formatted_messages.append(formatted_msg)
+
+            result = "\n---\n".join(formatted_messages)
+
+            if __event_emitter__:
+                await __event_emitter__({
+                    "type": "status",
+                    "data": {"description": f"Successfully retrieved {len(messages_data)} messages for task '{task_short_id}'", "done": True},
+                })
+
+            return f"**Messages for Task '{task_short_id}' ({task_name}) in project '{found_in_project}' - {len(messages_data)} messages:**\n\n{result}"
+
+        except Exception as e:
+            error_msg = f"Failed to retrieve task messages: {str(e)}"
+            if __event_emitter__:
+                await __event_emitter__({
+                    "type": "status",
+                    "data": {"description": error_msg, "done": True},
+                })
+            return error_msg
+
+    async def get_goodday_task_details(
+        self,
+        task_short_id: str,
+        project_name: str,
+        __request__: Request = None,
+        __user__: dict = None,
+        __event_emitter__: Callable = None
+    ) -> str:
+        """
+        Get detailed information about a specific task by its short ID (e.g., RAD-434) within a specified project.
+
+        :param task_short_id: The short ID of the task (e.g., RAD-434)
+        :param project_name: The name of the project containing the task (required, case-insensitive)
+        """
+        if __event_emitter__:
+            await __event_emitter__({
+                "type": "status",
+                "data": {"description": f"Finding project '{project_name}'...", "done": False},
+            })
+
+        try:
+            # Get all projects and find the one matching project_name (case-insensitive)
+            projects_data = await self._make_goodday_request("projects")
+            if not projects_data or not isinstance(projects_data, list):
+                return "Unable to fetch projects to search for task."
+            project_name_lower = project_name.lower().strip()
+            matched_project = None
+            for proj in projects_data:
+                if not isinstance(proj, dict):
+                    continue
+                current_project_name = proj.get('name', '').lower().strip()
+                if current_project_name == project_name_lower:
+                    matched_project = proj
+                    break
+                if project_name_lower in current_project_name or current_project_name in project_name_lower:
+                    matched_project = proj
+                    break
+            if not matched_project:
+                available_projects = [p.get('name', 'Unknown') for p in projects_data if isinstance(p, dict)]
+                return f"Project '{project_name}' not found. Available projects: {', '.join(available_projects[:10])}{'...' if len(available_projects) > 10 else ''}"
+            project_id = matched_project.get('id')
+            found_in_project = matched_project.get('name')
+
+            if __event_emitter__:
+                await __event_emitter__({
+                    "type": "status",
+                    "data": {"description": f"Searching for task '{task_short_id}' in project '{found_in_project}'...", "done": False},
+                })
+
+            # Search for the task in the specified project
+            endpoint = f"project/{project_id}/tasks?subfolders=true"
+            tasks_data = await self._make_goodday_request(endpoint)
+            if not tasks_data or not isinstance(tasks_data, list):
+                return f"Unable to fetch tasks for project '{found_in_project}'."
+            task_id = None
+            for task in tasks_data:
+                if isinstance(task, dict) and task.get('shortId') == task_short_id:
+                    task_id = task.get('id')
+                    break
+            if not task_id:
+                return f"Task with short ID '{task_short_id}' not found in project '{found_in_project}'. Please verify the task ID and project name are correct."
+
+            if __event_emitter__:
+                await __event_emitter__({
+                    "type": "status",
+                    "data": {"description": f"Found task in project '{found_in_project}', fetching detailed information...", "done": False},
+                })
+
+            # Now get the detailed task information
+            endpoint = f"task/{task_id}"
+            task_data = await self._make_goodday_request(endpoint)
+
+            if not task_data:
+                return f"No details found for task '{task_short_id}'."
+
+            if isinstance(task_data, dict) and "error" in task_data:
+                return f"Unable to fetch task details: {task_data.get('error', 'Unknown error')}"
+
+            if not isinstance(task_data, dict):
+                return f"Unexpected response format: {str(task_data)}"
+
+            # Get all users for name lookup
+            users_data = await self._make_goodday_request("users")
+            user_id_to_name = {}
+            if isinstance(users_data, list):
+                for u in users_data:
+                    if isinstance(u, dict):
+                        user_id_to_name[u.get("id")] = u.get("name", "Unknown")
+
+            def user_display(user_id):
+                if not user_id:
+                    return "N/A"
+                name = user_id_to_name.get(user_id)
+                return f"{name} ({user_id})" if name else user_id
+
+            # Format the task details
+            status = task_data.get('status', {}) if isinstance(task_data.get('status'), dict) else {}
+            task_type = task_data.get('taskType', {}) if isinstance(task_data.get('taskType'), dict) else {}
+            custom_fields = task_data.get('customFieldsData', {}) if isinstance(task_data.get('customFieldsData'), dict) else {}
+            subtasks = task_data.get('subtasks', []) if isinstance(task_data.get('subtasks'), list) else []
+            users = task_data.get('users', []) if isinstance(task_data.get('users'), list) else []
+
+            formatted_details = f"""
+**Task ID:** {task_data.get('shortId', 'N/A')}
+**Name:** {task_data.get('name', 'N/A')}
+**Project:** {found_in_project}
+**Status:** {status.get('name', 'N/A')})
+**Task Type:** {task_type.get('name', 'N/A')})
+**System Status:** {task_data.get('systemStatus', 'N/A')}
+**System Type:** {task_data.get('systemType', 'N/A')}
+**Priority:** {task_data.get('priority', 'N/A')}
+**Assigned To:** {user_display(task_data.get('assignedToUserId'))}
+**Action Required:** {user_display(task_data.get('actionRequiredUserId'))}
+**Created By:** {user_display(task_data.get('createdByUserId'))}
+**Start Date:** {task_data.get('startDate', 'N/A')}
+**End Date:** {task_data.get('endDate', 'N/A')}
+**Deadline:** {task_data.get('deadline', 'N/A')}
+**Schedule Date:** {task_data.get('scheduleDate', 'N/A')}
+**Schedule Status:** {task_data.get('scheduleStatus', 'N/A')}
+**Estimate:** {task_data.get('estimate', 'N/A')}
+**Reported Time:** {task_data.get('reportedTime', 'N/A')}
+**Moment Created:** {task_data.get('momentCreated', 'N/A')}
+**Moment Closed:** {task_data.get('momentClosed', 'N/A')}
+**Recent Activity:** {task_data.get('recentActivityMoment', 'N/A')}
+**Parent Task ID:** {task_data.get('parentTaskId', 'N/A')}
+**Users:** {', '.join([user_display(uid) for uid in users]) if users else 'N/A'}
+**Subtasks Count:** {len(subtasks)}
+""".strip()
+
+            # Add custom fields if they exist
+            if custom_fields:
+                formatted_details += "\n\n**Custom Fields:**"
+                for field_id, field_value in custom_fields.items():
+                    formatted_details += f"\n- {field_id}: {field_value}"
+
+            # Add subtasks if they exist
+            if subtasks:
+                formatted_details += f"\n\n**Subtasks ({len(subtasks)}):**"
+                for i, subtask in enumerate(subtasks[:10]):  # Limit to first 10 subtasks
+                    if isinstance(subtask, dict):
+                        formatted_details += f"\n- {subtask.get('shortId', 'N/A')}: {subtask.get('name', 'N/A')}"
+                    else:
+                        formatted_details += f"\n- Subtask {i+1}: {subtask}"
+                if len(subtasks) > 10:
+                    formatted_details += f"\n... and {len(subtasks) - 10} more subtasks"
+
+            if __event_emitter__:
+                await __event_emitter__({
+                    "type": "status",
+                    "data": {"description": f"Successfully retrieved details for task '{task_short_id}'", "done": True},
+                })
+
+            return f"**Task Details for '{task_short_id}' in project '{found_in_project}':**\n\n{formatted_details}"
+
+        except Exception as e:
+            error_msg = f"Failed to retrieve task details: {str(e)}"
             if __event_emitter__:
                 await __event_emitter__({
                     "type": "status",
