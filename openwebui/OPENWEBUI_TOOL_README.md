@@ -17,7 +17,14 @@ This OpenWebUI tool provides integration with the Goodday project management sys
 ### Smart Query
 - **get_goodday_smart_query**: Smart query function that interprets natural language requests for Goodday data (e.g., "get tasks from sprint 233", "tasks assigned to John Doe").
 
-## API Key Configuration
+### Search & Task Details
+- **search_goodday_tasks**: Search for tasks using semantic search with a VectorDB backend
+- **get_goodday_task_messages**: Get messages from a specific task by its short ID (e.g., RAD-434) within a project
+- **get_goodday_task_details**: Get detailed information about a specific task by its short ID within a project
+
+## Configuration
+
+### API Key Configuration
 
 You can set the Goodday API key dynamically in code using the `Valves` class:
 
@@ -26,9 +33,18 @@ from goodday_openwebui_complete_tool import Tools
 
 tools = Tools()
 tools.valves.api_key = "your_goodday_api_token_here"  # Set API key dynamically
+tools.valves.search_url = "https://your-server.com/webhook/goodday-mcp/search-tasks"  # Set full search endpoint URL
+tools.valves.bearer_token = "your_search_bearer_token"  # Set search bearer token
 ```
 
-If `valves.api_key` is not set, the tool will fall back to the `GOODDAY_API_TOKEN` environment variable.
+### Available Valves Configuration
+
+- **api_key**: Your Goodday API token (can also use `GOODDAY_API_TOKEN` environment variable)
+- **api_base**: Goodday API base URL (default: "https://api.goodday.work/2.0")  
+- **search_url**: Full VectorDB Search API endpoint URL (default: "https://tbp-mng.c-dev.in/webhook/goodday-mcp/search-tasks") - **Specify the complete endpoint URL**
+- **bearer_token**: Bearer token for search API authentication (can also use `GOODDAY_SEARCH_BEARER_TOKEN` environment variable)
+
+**Note**: If `valves.api_key` is not set, the tool will fall back to the `GOODDAY_API_TOKEN` environment variable. Similarly for `bearer_token` and `GOODDAY_SEARCH_BEARER_TOKEN`.
 
 ## Usage Examples
 
@@ -58,6 +74,73 @@ result = await tools.get_goodday_user_tasks(user="roney@email.com")
 ```python
 result = await tools.get_goodday_smart_query(query="get tasks from sprint 233 in Astra project")
 ```
+
+### 6. Search Tasks
+```python
+result = await tools.search_goodday_tasks(query="security improvements")
+```
+
+### 7. Get Task Messages
+```python
+result = await tools.get_goodday_task_messages(task_short_id="RAD-434", project_name="Astra")
+```
+
+### 8. Get Task Details
+```python
+result = await tools.get_goodday_task_details(task_short_id="RAD-434", project_name="Astra")
+```
+
+## Search API Setup
+
+To use the search functionality, you need to configure a VectorDB backend:
+
+1. **Set the full search endpoint URL** in valves:
+   ```python
+   tools.valves.search_url = "https://tbp-mng.c-dev.in/webhook/goodday-mcp/search-tasks"
+   ```
+
+2. **Set the bearer token** for authentication:
+   ```python
+   tools.valves.bearer_token = "your_bearer_token_here"
+   ```
+   Or set the environment variable:
+   ```bash
+   export GOODDAY_SEARCH_BEARER_TOKEN="your_bearer_token_here"
+   ```
+
+### Creating the Vector Database with n8n
+
+You can create the VectorDB using the provided n8n workflow. This workflow:
+
+1. **Fetches all projects** from Goodday API
+2. **Retrieves tasks** for each project (including subfolders)
+3. **Gets task messages** for each task
+4. **Chunks the data** into manageable pieces with task context
+5. **Creates embeddings** using Ollama (mxbai-embed-large model)
+6. **Stores in Qdrant** vector database
+7. **Provides search endpoint** for semantic search
+
+**Key Features:**
+- Automatically clears and rebuilds the vector database
+- Chunks task messages with task ID and name as context
+- Provides webhook endpoint for search queries
+- Returns structured results with task ID, title, content, and relevance score
+
+**Setup Requirements:**
+- n8n instance with Langchain nodes
+- Ollama server with mxbai-embed-large model
+- Qdrant vector database instance
+- Goodday API credentials
+- Bearer token for webhook authentication
+
+**Webhook Endpoint:** The workflow creates a webhook at `/goodday-mcp/search-tasks` that accepts:
+- Query parameter: `query` (the search term)
+- Authentication: Bearer token in header
+- Response: JSON array with search results including task ID, title, content, and score
+
+To use the provided workflow, import the JSON workflow into your n8n instance and configure your credentials accordingly.
+
+**Workflow File:** The complete n8n workflow is available in `n8n-workflow-goodday-vectordb.json` in this directory. Import this file into your n8n instance to get started quickly.
 
 ## Error Handling
 

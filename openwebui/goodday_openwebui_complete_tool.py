@@ -1,6 +1,6 @@
 """
-title: Goodday Project Management Complete
-author: goodday-mcp
+title: Goodday Project Management
+author: Roney Dsilva
 author_url: https://github.com/cdmx1/goodday-mcp
 funding_url: https://github.com/cdmx1/goodday-mcp
 version: 1.1.0
@@ -8,11 +8,8 @@ required_open_webui_version: 0.5.3
 """
 
 import os
-import json
-import asyncio
 import httpx
-from datetime import datetime
-from typing import Callable, Optional, List, Dict, Any
+from typing import Callable
 from fastapi import Request
 from pydantic import BaseModel, Field
 
@@ -21,6 +18,8 @@ class Tools:
     class Valves(BaseModel):
         api_key: str = Field("", description="Your Goodday API key")
         api_base: str = Field("https://api.goodday.work/2.0", description="Goodday API base URL")
+        search_url: str = Field("https://example.com/webhook/goodday-mcp/search-tasks", description="Full VectorDB Search API endpoint URL")
+        bearer_token: str = Field("", description="Bearer token for search API authentication")
 
     def __init__(self):
         self.valves = self.Valves()
@@ -60,6 +59,38 @@ class Tools:
                 raise Exception(f"Request error: {str(e)}")
             except Exception as e:
                 raise Exception(f"Unexpected error: {str(e)}")
+
+    async def _make_search_request(self, method: str = "GET", params: dict = None) -> dict:
+        """Make a request to the search API with bearer token authentication."""
+        bearer_token = self.valves.bearer_token or os.getenv("GOODDAY_SEARCH_BEARER_TOKEN", "")
+        if not bearer_token:
+            raise ValueError("Bearer token is required for search API. Set it in Valves.bearer_token or GOODDAY_SEARCH_BEARER_TOKEN environment variable")
+        
+        headers = {
+            "User-Agent": self.user_agent,
+            "Authorization": f"Bearer {bearer_token}",
+            "Content-Type": "application/json"
+        }
+        
+        # Use the full URL directly from search_url
+        url = str(self.valves.search_url).strip()
+        
+        async with httpx.AsyncClient() as client:
+            try:
+                if method.upper() == "GET":
+                    response = await client.get(url, headers=headers, params=params, timeout=30.0)
+                else:
+                    response = await client.request(method.upper(), url, headers=headers, params=params, timeout=30.0)
+
+                response.raise_for_status()
+                return response.json()
+
+            except httpx.HTTPStatusError as e:
+                raise Exception(f"Search API HTTP error {e.response.status_code}: {e.response.text}")
+            except httpx.RequestError as e:
+                raise Exception(f"Search API request error: {str(e)}")
+            except Exception as e:
+                raise Exception(f"Search API unexpected error: {str(e)}")
 
     def _format_task(self, task: dict) -> str:
         """Format a task into a readable string with safe checks."""
@@ -116,6 +147,22 @@ class Tools:
 **Email:** {user.get('email', 'N/A')}
 **Role:** {role.get('name', 'N/A')}
 **Status:** {user.get('status', 'N/A')}
+""".strip()
+
+    def _format_search_result(self, result: dict) -> str:
+        """Format a search result into a readable string with safe checks."""
+        if not isinstance(result, dict):
+            return f"Invalid search result data: {repr(result)}"
+
+        # Safely get values and handle None cases
+        task_id = result.get('taskId') or 'N/A'
+        title = result.get('title') or 'N/A'
+        content = result.get('content') or 'No content'
+
+        return f"""
+**Task ID:** {task_id}
+**Title:** {title}
+**Content:** {content}
 """.strip()
 
     # Project Management Tools
@@ -502,40 +549,77 @@ class Tools:
                     )
             # Pattern: "get messages from TASK-ID" or "messages for TASK-ID"
             if ("message" in query_lower or "messages" in query_lower) and ("from" in query_lower or "for" in query_lower):
-                # Extract task ID
+                # Extract task ID and project name
                 import re
                 task_id_pattern = r'(?:from|for)\s+([A-Z]+-\d+)'
                 task_match = re.search(task_id_pattern, query_lower)
+                
+                # Try to extract project name
+                project_patterns = [
+                    r'(?:from|in|project)\s+(\w+)',
+                    r'(\w+)\s+project',
+                ]
+                project_name = None
+                for pattern in project_patterns:
+                    project_match = re.search(pattern, query_lower)
+                    if project_match:
+                        project_name = project_match.group(1)
+                        break
+                
                 if task_match:
                     task_short_id = task_match.group(1).upper()
-                    return await self.get_goodday_task_messages(
-                        task_short_id=task_short_id,
-                        __request__=__request__,
-                        __user__=__user__,
-                        __event_emitter__=__event_emitter__
-                    )
+                    if project_name:
+                        return await self.get_goodday_task_messages(
+                            task_short_id=task_short_id,
+                            project_name=project_name,
+                            __request__=__request__,
+                            __user__=__user__,
+                            __event_emitter__=__event_emitter__
+                        )
+                    else:
+                        return f"Please specify the project name. Example: 'get messages from {task_short_id} in ASTRA project'"
 
             # Pattern: "get task TASK-ID" or "task details for TASK-ID" or "details for TASK-ID"
             if (("task" in query_lower and "detail" in query_lower) or 
                 ("details" in query_lower and ("for" in query_lower or "of" in query_lower)) or
                 ("get task" in query_lower)) and not ("tasks" in query_lower or "message" in query_lower):
-                # Extract task ID
+                # Extract task ID and project name
                 import re
                 task_id_patterns = [
                     r'(?:task|for|of)\s+([A-Z]+-\d+)',
                     r'([A-Z]+-\d+)',  # Just the task ID pattern
                 ]
                 
+                # Try to extract project name
+                project_patterns = [
+                    r'(?:from|in|project)\s+(\w+)',
+                    r'(\w+)\s+project',
+                ]
+                project_name = None
+                for pattern in project_patterns:
+                    project_match = re.search(pattern, query_lower)
+                    if project_match:
+                        project_name = project_match.group(1)
+                        break
+                
+                task_short_id = None
                 for pattern in task_id_patterns:
                     task_match = re.search(pattern, query_lower)
                     if task_match:
                         task_short_id = task_match.group(1).upper()
+                        break
+                
+                if task_short_id:
+                    if project_name:
                         return await self.get_goodday_task_details(
                             task_short_id=task_short_id,
+                            project_name=project_name,
                             __request__=__request__,
                             __user__=__user__,
                             __event_emitter__=__event_emitter__
                         )
+                    else:
+                        return f"Please specify the project name. Example: 'get task {task_short_id} in ASTRA project'"
 
             # Pattern: "USER tasks" (e.g., "Roney Dsilva tasks")
             if "task" in query_lower and not any(keyword in query_lower for keyword in ["sprint", "spring", "project", "assigned", "message", "detail"]):
@@ -547,8 +631,29 @@ class Tools:
                         __user__=__user__,
                         __event_emitter__=__event_emitter__
                     )
+            # Pattern: "search for QUERY" or "find tasks QUERY"
+            if ("search" in query_lower or "find" in query_lower) and "task" in query_lower:
+                # Extract search query
+                search_terms = query_lower
+                # Remove common words
+                for word in ["search", "for", "find", "tasks", "task", "get"]:
+                    search_terms = search_terms.replace(word, "").strip()
+                
+                if search_terms:
+                    return await self.search_goodday_tasks(
+                        query=search_terms,
+                        __request__=__request__,
+                        __user__=__user__,
+                        __event_emitter__=__event_emitter__
+                    )
+
             # If no pattern matches, provide suggestions
             return """I couldn't understand your query. Here are some examples of what I can help with:
+
+**Search Tasks:**
+- "search for Security tasks"
+- "find tasks S3 upload"
+- "search tasks security improvements"
 
 **Sprint Tasks:**
 - "get tasks from sprint 233 in ASTRA project"
@@ -562,20 +667,21 @@ class Tools:
 - "tasks for John Smith"
 
 **Task Messages:**
-- "get messages from RAD-434"
-- "messages for ABC-123"
-- "get all messages from TASK-456"
+- "get messages from RAD-434 in ASTRA project"
+- "messages for ABC-123 in PROJECT_NAME"
+- "get all messages from TASK-456 in Astra"
 
 **Task Details:**
-- "get task RAD-434"
-- "task details for ABC-123"
-- "details for TASK-456"
-- "get details of RAD-434"
+- "get task RAD-434 in ASTRA project"
+- "task details for ABC-123 in PROJECT_NAME" 
+- "details for TASK-456 in Astra"
+- "get details of RAD-434 in ASTRA"
 
 **Other Options:**
 - Use specific function names like `get_goodday_projects()` for projects
 - Use `get_goodday_users()` to see available users
 - Use `get_goodday_project_tasks()` for project tasks
+- Use `search_goodday_tasks()` for semantic search
 
 Please try rephrasing your query with one of these patterns."""
 
@@ -957,6 +1063,103 @@ Please try rephrasing your query with one of these patterns."""
 
         except Exception as e:
             error_msg = f"Failed to retrieve task details: {str(e)}"
+            if __event_emitter__:
+                await __event_emitter__({
+                    "type": "status",
+                    "data": {"description": error_msg, "done": True},
+                })
+            return error_msg
+
+    # Search Tools
+    async def search_goodday_tasks(
+        self,
+        query: str,
+        __request__: Request = None,
+        __user__: dict = None,
+        __event_emitter__: Callable = None
+    ) -> str:
+        """
+        Search for tasks in Goodday using semantic search
+
+        :param query: Search query to find relevant tasks (e.g., "security task", "UI improvements")
+        """
+        # Validate and sanitize the query parameter
+        if not query or not isinstance(query, str):
+            return "Error: Search query must be a non-empty string"
+        
+        query = query.strip()
+        if not query:
+            return "Error: Search query cannot be empty"
+            
+        if __event_emitter__:
+            await __event_emitter__({
+                "type": "status",
+                "data": {"description": f"Searching for tasks with query: '{query}'...", "done": False},
+            })
+
+        try:
+            # Make the search request
+            params = {"query": query}
+            data = await self._make_search_request(params=params)
+
+            if not data:
+                return f"No search results found for query: '{query}'"
+
+            if isinstance(data, dict) and "error" in data:
+                return f"Search error: {data.get('error', 'Unknown error')}"
+
+            # Handle the response format - expecting a list with result objects
+            if not isinstance(data, list) or len(data) == 0:
+                return f"No search results found for query: '{query}'"
+
+            # Extract results from the first item in the list
+            first_item = data[0]
+            if not isinstance(first_item, dict) or "result" not in first_item:
+                return f"Unexpected search response format: {str(data)}"
+
+            results = first_item.get("result", [])
+            if not isinstance(results, list) or len(results) == 0:
+                return f"No search results found for query: '{query}'"
+
+            # Format the search results
+            formatted_results = []
+            seen_task_ids = set()
+            
+            for result in results:
+                if not isinstance(result, dict):
+                    continue
+                
+                task_id = result.get('taskId') or 'N/A'
+                
+                # Group by task ID to avoid duplicates
+                if task_id not in seen_task_ids:
+                    seen_task_ids.add(task_id)
+                    formatted_results.append(self._format_search_result(result))
+                else:
+                    # For duplicate task IDs, append additional content if different
+                    existing_result = None
+                    for i, existing in enumerate(formatted_results):
+                        if task_id in existing:
+                            existing_result = i
+                            break
+                    
+                    if existing_result is not None:
+                        current_content = result.get('content') or ''
+                        if current_content and current_content not in formatted_results[existing_result]:
+                            formatted_results[existing_result] += f"\n**Additional Content:** {current_content}"
+
+            result_text = "\n---\n".join(formatted_results)
+
+            if __event_emitter__:
+                await __event_emitter__({
+                    "type": "status",
+                    "data": {"description": f"Found {len(formatted_results)} unique tasks matching '{query}'", "done": True},
+                })
+
+            return f"**Search Results for '{query}' ({len(formatted_results)} unique tasks found):**\n\n{result_text}"
+
+        except Exception as e:
+            error_msg = f"Failed to search tasks: {str(e)}"
             if __event_emitter__:
                 await __event_emitter__({
                     "type": "status",

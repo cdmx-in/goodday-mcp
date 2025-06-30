@@ -1,0 +1,625 @@
+{
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -660,
+        440
+      ],
+      "id": "0133f3a5-9f35-44ba-ae8c-383d48541e7a",
+      "name": "When clicking 'Test workflow'"
+    },
+    {
+      "parameters": {
+        "model": "mxbai-embed-large:latest"
+      },
+      "type": "@n8n/n8n-nodes-langchain.embeddingsOllama",
+      "typeVersion": 1,
+      "position": [
+        1940,
+        820
+      ],
+      "id": "2d208d35-5e9a-4d4b-8356-7f416c48d6da",
+      "name": "Embeddings Ollama",
+      "credentials": {
+        "ollamaApi": {
+          "id": "QWMdzQTnBJSjsenR",
+          "name": "Ollama account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.documentDefaultDataLoader",
+      "typeVersion": 1,
+      "position": [
+        2420,
+        800
+      ],
+      "id": "436d251c-7923-4754-a743-75d013bc3959",
+      "name": "Default Data Loader"
+    },
+    {
+      "parameters": {
+        "chunkSize": 800,
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.textSplitterRecursiveCharacterTextSplitter",
+      "typeVersion": 1,
+      "position": [
+        2520,
+        1020
+      ],
+      "id": "912f80e3-27a4-47f7-89aa-7008a57ba188",
+      "name": "Recursive Character Text Splitter"
+    },
+    {
+      "parameters": {
+        "url": "https://api.goodday.work/2.0/projects",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -280,
+        440
+      ],
+      "id": "228f8248-58da-4ec3-af77-4ca990efe711",
+      "name": "HTTPFetchProjects",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "2wkC2QOxteoZAmmF",
+          "name": "GoodDay API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "=https://api.goodday.work/2.0/project/{{ $json.id }}/tasks ",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "subfolders",
+              "value": "true"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        160,
+        440
+      ],
+      "id": "8a1bf28e-c84d-4aa1-946c-b665ac4985a9",
+      "name": "HTTPGetTasks",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "2wkC2QOxteoZAmmF",
+          "name": "GoodDay API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "f493946c-4419-4073-8302-313a9b1d3655",
+              "leftValue": "={{ $json.systemType }}",
+              "rightValue": "PROJECT",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -60,
+        440
+      ],
+      "id": "56e48a80-919d-4aac-9726-a8e227e0ab3c",
+      "name": "GetOnlyProjects"
+    },
+    {
+      "parameters": {
+        "url": "=https://api.goodday.work/2.0/task/{{ $json.id }}/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "subfolders",
+              "value": "true"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1398,
+        440
+      ],
+      "id": "7e1ae2b4-e965-4760-8e5e-81ffd10da954",
+      "name": "HTTPGetTasks1",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "2wkC2QOxteoZAmmF",
+          "name": "GoodDay API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        820,
+        440
+      ],
+      "id": "2030a010-63e4-4be4-997a-ffa6eff4a804",
+      "name": "Loop Over Items"
+    },
+    {
+      "parameters": {
+        "jsCode": "// const FLAGS = $getWorkflowStaticData('global');\n// FLAGS.RESULTS = [];\n\nreturn $input.all().map(item => {\n  return {\n    json: {\n      id: item.json.id,\n      name: item.json.name,\n      shortId: item.json.shortId,\n    }\n  };\n});"
+      },
+      "id": "c4918d2c-9fa8-4a93-83df-95142708f13b",
+      "name": "SetFlags",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [
+        600,
+        440
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const taskDetails = $(\"Input\").first();\nconst messagesInput = $input.all();\n\nconst taskId = taskDetails.json.shortId;\nconst taskName = taskDetails.json.name;\nconst prefix = `Task #${taskId} - ${taskName}: `;\nconst maxChunkLength = 800;\nconst baseLength = maxChunkLength - prefix.length;\n\nconst chunkedMessages = [];\n\nconst rawMessages = messagesInput.map(entry => entry.json.message);\n\n// Check if we have at least one valid message\nlet hasValidMessage = false;\n\nrawMessages.forEach(msg => {\n  if (msg !== null && msg.trim() !== \"\") {\n    hasValidMessage = true;\n    for (let i = 0; i < msg.length; i += baseLength) {\n      const chunkBody = msg.slice(i, i + baseLength);\n      const fullChunk = prefix + chunkBody;\n      chunkedMessages.push(fullChunk);\n    }\n  }\n});\n\n// If no valid messages, push a placeholder with just the prefix\nif (!hasValidMessage) {\n  chunkedMessages.push(prefix);\n}\n\nreturn [\n  {\n      messages: chunkedMessages\n  }\n];\n"
+      },
+      "id": "355480e3-c646-49a2-8487-cd409002f3d2",
+      "name": "SetFlags1",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [
+        1680,
+        520
+      ]
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        1040,
+        440
+      ],
+      "id": "41b26d98-b68d-47ac-8fd2-aed272ce9c52",
+      "name": "Input"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://xxxxxxxxx:6333/collections/goodday-tasks/points/delete",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"filter\": {\n    \"must\": []\n  }\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -500,
+        440
+      ],
+      "id": "88910210-6477-4dc6-b027-d0587f2bc80e",
+      "name": "ClearQdrant"
+    },
+    {
+      "parameters": {
+        "mode": "insert",
+        "qdrantCollection": {
+          "__rl": true,
+          "value": "goodday-tasks",
+          "mode": "list",
+          "cachedResultName": "goodday-tasks"
+        },
+        "embeddingBatchSize": 100,
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.vectorStoreQdrant",
+      "typeVersion": 1.1,
+      "position": [
+        2060,
+        520
+      ],
+      "id": "45c442a2-b409-4c9f-bb45-87e05f8ccc7a",
+      "name": "Qdrant Vector Store",
+      "credentials": {
+        "qdrantApi": {
+          "id": "bJcwFh8iiXqtEGBd",
+          "name": "QdrantApi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "messages",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        1860,
+        520
+      ],
+      "id": "5374e627-9a36-4804-9636-07e25deeebed",
+      "name": "Split Out"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chatTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        180,
+        880
+      ],
+      "id": "f87bf5e3-b95a-465a-9381-568194e7ef68",
+      "name": "When chat message received",
+      "webhookId": "6f1579c1-295e-4ef7-9e99-48dfbfcd0b99"
+    },
+    {
+      "parameters": {
+        "mode": "load",
+        "qdrantCollection": {
+          "__rl": true,
+          "value": "goodday-tasks",
+          "mode": "list",
+          "cachedResultName": "goodday-tasks"
+        },
+        "prompt": "={{ $json.query.query }}",
+        "topK": 10,
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.vectorStoreQdrant",
+      "typeVersion": 1.1,
+      "position": [
+        600,
+        1000
+      ],
+      "id": "64bdfe8c-8259-44a9-a592-32a72c2c885c",
+      "name": "Qdrant Vector Store1",
+      "credentials": {
+        "qdrantApi": {
+          "id": "bJcwFh8iiXqtEGBd",
+          "name": "QdrantApi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "model": "mxbai-embed-large:latest"
+      },
+      "type": "@n8n/n8n-nodes-langchain.embeddingsOllama",
+      "typeVersion": 1,
+      "position": [
+        620,
+        1220
+      ],
+      "id": "5121e3e7-1a98-4443-ad0c-4cb77595c53b",
+      "name": "Embeddings Ollama1",
+      "credentials": {
+        "ollamaApi": {
+          "id": "QWMdzQTnBJSjsenR",
+          "name": "Ollama account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "path": "/goodday-mcp/search-tasks",
+        "authentication": "headerAuth",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        240,
+        1000
+      ],
+      "id": "146aae4b-e618-43aa-b549-9094cb4ea951",
+      "name": "Webhook",
+      "webhookId": "137e5836-47c0-4877-9e95-57c592138538",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "ubdx9h8lG6edSZH5",
+          "name": "Goodday MCP - Search Documents"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "allIncomingItems",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1200,
+        1000
+      ],
+      "id": "ad9c4e32-a0f2-44f2-ab66-d23be5b48ad8",
+      "name": "Respond to Webhook"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Input from previous node, assuming it's passed as items[0].json\nconst input = $input.all(); // full array of items\n\n// Create output structure\nconst result = input.map(item => {\n  const content = item.json.document.pageContent;\n  const score = item.json.score;\n\n  // Extract Task ID and Title using RegEx\n  const match = content.match(/Task\\s+#([A-Z]+-\\d+)\\s+-\\s+([^:]+):/);\n  let taskId = null;\n  let title = null;\n\n  if (match) {\n    taskId = match[1];\n    title = match[2].trim();\n  }\n\n  return {\n    taskId,\n    title,\n    content,\n    score\n  };\n});\n\n// Return response to webhook or next node\nreturn [{ result }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        960,
+        1000
+      ],
+      "id": "2dd37dad-f3c6-4c0d-86f3-bf8ccb537106",
+      "name": "CleanOutput"
+    }
+  ],
+  "connections": {
+    "When clicking 'Test workflow'": {
+      "main": [
+        [
+          {
+            "node": "ClearQdrant",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Embeddings Ollama": {
+      "ai_embedding": [
+        [
+          {
+            "node": "Qdrant Vector Store",
+            "type": "ai_embedding",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Default Data Loader": {
+      "ai_document": [
+        [
+          {
+            "node": "Qdrant Vector Store",
+            "type": "ai_document",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Recursive Character Text Splitter": {
+      "ai_textSplitter": [
+        [
+          {
+            "node": "Default Data Loader",
+            "type": "ai_textSplitter",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTPFetchProjects": {
+      "main": [
+        [
+          {
+            "node": "GetOnlyProjects",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTPGetTasks": {
+      "main": [
+        [
+          {
+            "node": "SetFlags",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GetOnlyProjects": {
+      "main": [
+        [
+          {
+            "node": "HTTPGetTasks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTPGetTasks1": {
+      "main": [
+        [
+          {
+            "node": "SetFlags1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Items": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "SetFlags": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "SetFlags1": {
+      "main": [
+        [
+          {
+            "node": "Split Out",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Input": {
+      "main": [
+        [
+          {
+            "node": "HTTPGetTasks1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "ClearQdrant": {
+      "main": [
+        [
+          {
+            "node": "HTTPFetchProjects",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Qdrant Vector Store": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Out": {
+      "main": [
+        [
+          {
+            "node": "Qdrant Vector Store",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "When chat message received": {
+      "main": [
+        []
+      ]
+    },
+    "Qdrant Vector Store1": {
+      "main": [
+        [
+          {
+            "node": "CleanOutput",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Embeddings Ollama1": {
+      "ai_embedding": [
+        [
+          {
+            "node": "Qdrant Vector Store1",
+            "type": "ai_embedding",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Qdrant Vector Store1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CleanOutput": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {
+    "When clicking 'Test workflow'": [
+      {}
+    ]
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "897e09151bb36cf49c3f4d1a474c03620cf8178a51068a31ff0b088a2dbc8f25"
+  }
+}
