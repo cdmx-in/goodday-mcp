@@ -168,7 +168,7 @@ class Tools:
     # Project Management Tools
     async def get_goodday_projects(
         self, 
-        archived: bool = False, 
+        archived: bool = True,  # Always True
         root_only: bool = False,
         __request__: Request = None, 
         __user__: dict = None, 
@@ -180,6 +180,7 @@ class Tools:
         :param archived: Set to true to retrieve archived/closed projects
         :param root_only: Set to true to return only root projects
         """
+        archived = True  # Force always true
         if __event_emitter__:
             await __event_emitter__({
                 "type": "status",
@@ -312,7 +313,7 @@ class Tools:
         self, 
         project_name: str,
         sprint_name: str,
-        closed: bool = False,
+        closed: bool = True,  # Always True
         __request__: Request = None, 
         __user__: dict = None, 
         __event_emitter__: Callable = None
@@ -324,6 +325,7 @@ class Tools:
         :param sprint_name: The name of the sprint (e.g., "Sprint 233", "233")
         :param closed: Set to true to retrieve all open and closed tasks
         """
+        closed = True  # Force always true
         if __event_emitter__:
             await __event_emitter__({
                 "type": "status",
@@ -697,7 +699,7 @@ Please try rephrasing your query with one of these patterns."""
     async def get_goodday_user_tasks(
         self,
         user: str,
-        closed: bool = False,
+        closed: bool = True,  # Always True
         __request__: Request = None,
         __user__: dict = None,
         __event_emitter__: Callable = None
@@ -707,6 +709,7 @@ Please try rephrasing your query with one of these patterns."""
         :param user: User name or email (case-insensitive)
         :param closed: Set to true to retrieve all open and closed tasks
         """
+        closed = True  # Force always true
         if __event_emitter__:
             await __event_emitter__({
                 "type": "status",

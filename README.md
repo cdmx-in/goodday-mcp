@@ -23,6 +23,35 @@ A Model Context Protocol (MCP) server for integrating with Goodday project manag
 - **get_users**: Retrieve list of organization users
 - **get_user**: Get detailed information about a specific user
 
+## OpenWebUI Integration
+
+This package also includes an OpenWebUI tool that provides a complete interface for Goodday project management directly in chat interfaces. The OpenWebUI tool includes:
+
+### Features
+- **Project Management**: Get projects and project tasks
+- **Sprint Management**: Get tasks from specific sprints by name/number
+- **User Management**: Get tasks assigned to specific users
+- **Smart Query**: Natural language interface for common requests
+- **Search**: Semantic search across tasks using VectorDB backend
+- **Task Details**: Get detailed task information and messages
+
+### Setup
+1. Copy `openwebui/goodday_openwebui_complete_tool.py` to your OpenWebUI tools directory
+2. Configure the valves with your API credentials:
+   - `api_key`: Your Goodday API token
+   - `search_url`: Your VectorDB search endpoint (optional)
+   - `bearer_token`: Bearer token for search API (optional)
+
+### Vector Database Setup (Optional)
+For semantic search functionality, you can set up a vector database using the provided n8n workflow (`openwebui/n8n-workflow-goodday-vectordb.json`). This workflow:
+- Fetches all Goodday projects and tasks
+- Extracts task messages and content
+- Creates embeddings using Ollama
+- Stores in Qdrant vector database
+- Provides search API endpoint
+
+See `openwebui/OPENWEBUI_TOOL_README.md` for detailed usage instructions.
+
 ## Installation
 
 ### From PyPI (Recommended)
