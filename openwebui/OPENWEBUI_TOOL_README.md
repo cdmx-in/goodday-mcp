@@ -10,6 +10,7 @@ This OpenWebUI tool provides integration with the Goodday project management sys
 
 ### Sprint Management
 - **get_goodday_sprint_tasks**: Get tasks from a specific sprint by project name and sprint name/number (case-insensitive, with option for closed tasks)
+- **get_goodday_sprint_summary**: Get comprehensive sprint summary with task details, status distribution, and key metrics
 
 ### User Management
 - **get_goodday_user_tasks**: Get tasks assigned to a user by name or email (case-insensitive, with option for closed tasks)
@@ -41,7 +42,7 @@ tools.valves.bearer_token = "your_search_bearer_token"  # Set search bearer toke
 
 - **api_key**: Your Goodday API token (can also use `GOODDAY_API_TOKEN` environment variable)
 - **api_base**: Goodday API base URL (default: "https://api.goodday.work/2.0")  
-- **search_url**: Full VectorDB Search API endpoint URL (default: "https://tbp-mng.c-dev.in/webhook/goodday-mcp/search-tasks") - **Specify the complete endpoint URL**
+- **search_url**: Full VectorDB Search API endpoint URL (default: "https://example.com/webhook/goodday-mcp/search-tasks") - **Specify the complete endpoint URL**
 - **bearer_token**: Bearer token for search API authentication (can also use `GOODDAY_SEARCH_BEARER_TOKEN` environment variable)
 
 **Note**: If `valves.api_key` is not set, the tool will fall back to the `GOODDAY_API_TOKEN` environment variable. Similarly for `bearer_token` and `GOODDAY_SEARCH_BEARER_TOKEN`.
@@ -61,6 +62,11 @@ result = await tools.get_goodday_project_tasks(project_name="Astra")
 ### 3. Get Sprint Tasks
 ```python
 result = await tools.get_goodday_sprint_tasks(project_name="Astra", sprint_name="Sprint 120")
+```
+
+### 3a. Get Sprint Summary
+```python
+result = await tools.get_goodday_sprint_summary(project_name="Astra", sprint_name="Sprint 120")
 ```
 
 ### 4. Get User Tasks by Name or Email
@@ -88,6 +94,63 @@ result = await tools.get_goodday_task_messages(task_short_id="RAD-434", project_
 ### 8. Get Task Details
 ```python
 result = await tools.get_goodday_task_details(task_short_id="RAD-434", project_name="Astra")
+```
+
+## Sprint Summary Function
+
+The `get_goodday_sprint_summary` function provides a comprehensive analysis of sprint performance with:
+
+### Features:
+- **Sprint Overview**: Total tasks and basic metrics
+- **Status Distribution**: Breakdown of tasks by status (In Progress, Done, etc.)
+- **User Assignment**: Task distribution across team members
+- **Individual Task Details**: Task titles with descriptions from first message
+
+### Usage:
+```python
+result = await tools.get_goodday_sprint_summary(
+    project_name="ASTRA",     # Main project name (case-insensitive)
+    sprint_name="Sprint 233"  # Sprint name or number
+)
+```
+
+### Smart Query Examples:
+The `get_goodday_smart_query` function also supports sprint summary requests:
+```python
+result = await tools.get_goodday_smart_query("sprint 233 summary from ASTRA project")
+result = await tools.get_goodday_smart_query("get summary of sprint 102 in Astra")
+```
+
+### Sample Output:
+```
+**Sprint Summary for 'Sprint 233' in 'ASTRA':**
+
+**Sprint Overview:**
+- Sprint: Sprint 233  
+- Project: ASTRA
+- Total Tasks: 15
+
+**Status Distribution:**
+  - Done: 8
+  - In Progress: 4
+  - To Do: 3
+
+**Task Assignment:**
+  - John Smith: 6 tasks
+  - Jane Doe: 5 tasks
+  - Bob Wilson: 4 tasks
+
+**Task Details:**
+---
+**ASTRA-1234**: Implement user authentication
+- Status: Done
+- Assigned To: John Smith
+- Description: Need to implement OAuth 2.0 authentication system with JWT tokens
+
+**ASTRA-1235**: Fix database performance issues
+- Status: In Progress
+- Assigned To: Jane Doe
+- Description: Query optimization needed for user dashboard loads
 ```
 
 ## Search API Setup

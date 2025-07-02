@@ -282,6 +282,8 @@ class Tools:
     async def get_goodday_project_tasks(
         self,
         project_name: str,
+        closed: bool = True,  # Always True
+        subfolders: bool = True,  # Always True
         __request__: Request = None,
         __user__: dict = None,
         __event_emitter__: Callable = None,
@@ -290,7 +292,11 @@ class Tools:
         Get tasks from a specific Goodday project by project name (case-insensitive)
 
         :param project_name: The name of the project (required, case-insensitive)
+        :param closed: Set to true to retrieve all open and closed tasks
+        :param subfolders: Set to true to include tasks from subfolders
         """
+        closed = True  # Force always true
+        subfolders = True  # Force always true
         if __event_emitter__:
             await __event_emitter__(
                 {
@@ -344,7 +350,10 @@ class Tools:
                 )
 
             params = []
-            params.append("subfolders=true")  # Always include subfolders
+            if closed:
+                params.append("closed=true")
+            if subfolders:
+                params.append("subfolders=true")
             endpoint = f"project/{project_id}/tasks"
             if params:
                 endpoint += "?" + "&".join(params)
@@ -355,7 +364,28 @@ class Tools:
                 return f"Unable to fetch tasks: {data.get('error', 'Unknown error')}"
             if not isinstance(data, list):
                 return f"Unexpected response format: {str(data)}"
-            tasks = [self._format_task(task) for task in data]
+
+            # Get users data for name mapping
+            users_data = await self._make_goodday_request("users")
+            user_id_to_name = {}
+            if isinstance(users_data, list):
+                for u in users_data:
+                    if isinstance(u, dict):
+                        user_id_to_name[u.get("id")] = u.get("name", "Unknown")
+
+            def user_display(user_id):
+                if not user_id:
+                    return "Unassigned"
+                name = user_id_to_name.get(user_id)
+                return name if name else f"User {user_id}"
+
+            tasks = [
+                self._format_task(task).replace(
+                    f"**Assigned To:** {task.get('assignedToUserId', 'N/A')}",
+                    f"**Assigned To:** {user_display(task.get('assignedToUserId'))}",
+                )
+                for task in data
+            ]
             result = "\n---\n".join(tasks)
 
             if __event_emitter__:
@@ -566,6 +596,21 @@ class Tools:
                 return f"Sprint '{actual_sprint_name}' exists but contains no tasks."
             tasks = [self._format_task(task) for task in data]
             result = "\n---\n".join(tasks)
+
+            # Get users data for name mapping
+            users_data = await self._make_goodday_request("users")
+            user_id_to_name = {}
+            if isinstance(users_data, list):
+                for u in users_data:
+                    if isinstance(u, dict):
+                        user_id_to_name[u.get("id")] = u.get("name", "Unknown")
+
+            def user_display(user_id):
+                if not user_id:
+                    return "Unassigned"
+                name = user_id_to_name.get(user_id)
+                return name if name else f"User {user_id}"
+
             if __event_emitter__:
                 await __event_emitter__(
                     {
