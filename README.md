@@ -2,6 +2,10 @@
 
 A Model Context Protocol (MCP) server for integrating with Goodday project management platform. This server provides tools for managing projects, tasks, and users through the Goodday API v2.
 
+<a href="https://glama.ai/mcp/servers/@cdmx-in/goodday-mcp">
+  <img width="380" height="200" src="https://glama.ai/mcp/servers/@cdmx-in/goodday-mcp/badge" alt="goodday-mcp MCP server" />
+</a>
+
 ## Features
 
 ### Project Management
