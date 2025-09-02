@@ -1,5 +1,5 @@
 import asyncio
-from openwebui.goodday_openwebui_complete_tool import Tools
+from goodday_openwebui_complete_tool import Tools
 
 
 async def fetch_sprint_tasks(project_name, sprint_name, closed=False):

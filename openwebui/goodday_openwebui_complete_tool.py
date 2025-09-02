@@ -33,10 +33,10 @@ class Tools:
         self.valves = self.Valves()
         self.user_agent = "goodday-openwebui-complete/1.1.0"
         self._user_cache = None  # Cache for user data
-        self._cache_expiry = 0   # Cache expiry timestamp
+        self._cache_expiry = 0  # Cache expiry timestamp
 
     async def _make_goodday_request(
-        self, endpoint: str, method: str = "GET", data: dict = None
+        self, endpoint: str, method: str = "GET", data: dict = None, subfolders: bool = True
     ) -> dict:
         """Make a direct request to the Goodday API."""
         api_token = self.valves.api_key or os.getenv("GOODDAY_API_TOKEN", "")
@@ -50,6 +50,14 @@ class Tools:
             "gd-api-token": api_token,
             "Content-Type": "application/json",
         }
+
+        # Automatically add subfolders=true for project task and document endpoints if not already present
+        if subfolders and endpoint.startswith("project/") and ("/tasks" in endpoint or "/documents" in endpoint):
+            if "?" in endpoint:
+                if "subfolders=" not in endpoint:
+                    endpoint += "&subfolders=true"
+            else:
+                endpoint += "?subfolders=true"
 
         url = f"{self.valves.api_base}/{endpoint.lstrip('/')}"
 
@@ -202,10 +210,11 @@ class Tools:
 **Title:** {title}
 **Content:** {content}
 """.strip()
+
     async def _get_user_mapping(self, __event_emitter__: Callable = None) -> dict:
         """Get user ID to name mapping for displaying user names instead of IDs. Uses caching."""
         import time
-        
+
         # Check if cache is still valid (5 minutes TTL)
         current_time = time.time()
         if self._user_cache and (current_time - self._cache_expiry) < 300:
@@ -220,7 +229,7 @@ class Tools:
                     }
                 )
             return self._user_cache
-        
+
         if __event_emitter__:
             await __event_emitter__(
                 {
@@ -231,14 +240,14 @@ class Tools:
                     },
                 }
             )
-        
+
         users_data = await self._make_goodday_request("users")
         user_id_to_name = {}
         if isinstance(users_data, list):
             for u in users_data:
                 if isinstance(u, dict):
                     user_id_to_name[u.get("id")] = u.get("name", "Unknown")
-            
+
             if __event_emitter__:
                 await __event_emitter__(
                     {
@@ -249,23 +258,27 @@ class Tools:
                         },
                     }
                 )
-            
+
             # Update cache
             self._user_cache = user_id_to_name
             self._cache_expiry = current_time
-            
+
         return user_id_to_name
 
     def _create_user_display_function(self, user_id_to_name: dict):
         """Create a user display function with the given user mapping."""
+
         def user_display(user_id):
             if not user_id:
                 return "Unassigned"
             name = user_id_to_name.get(user_id)
             return name if name else f"User {user_id}"
+
         return user_display
 
-    async def _find_project_by_name(self, project_name: str, __event_emitter__: Callable = None) -> tuple:
+    async def _find_project_by_name(
+        self, project_name: str, __event_emitter__: Callable = None
+    ) -> tuple:
         """Find a project by name (case-insensitive). Returns (project_dict, available_projects_list)."""
         if __event_emitter__:
             await __event_emitter__(
@@ -277,16 +290,22 @@ class Tools:
                     },
                 }
             )
-        
+
         projects_data = await self._make_goodday_request("projects")
         if not projects_data or not isinstance(projects_data, list):
             return None, []
-        
+
+        # Filter out system projects (like sprints) to avoid overwhelming the AI
+        filtered_projects = [
+            proj for proj in projects_data 
+            if isinstance(proj, dict) and proj.get("systemType") != "PROJECT"
+        ]
+
         project_name_lower = project_name.lower().strip()
         matched_project = None
         available_projects = []
-        
-        for proj in projects_data:
+
+        for proj in filtered_projects:
             if not isinstance(proj, dict):
                 continue
             available_projects.append(proj.get("name", "Unknown"))
@@ -300,7 +319,7 @@ class Tools:
             ):
                 matched_project = proj
                 break
-        
+
         if __event_emitter__:
             if matched_project:
                 await __event_emitter__(
@@ -322,12 +341,14 @@ class Tools:
                         },
                     }
                 )
-        
+
         return matched_project, available_projects
 
-    async def _find_sprint_by_name(self, project_id: str, sprint_name: str, __event_emitter__: Callable = None) -> tuple:
+    async def _find_sprint_by_name(
+        self, project_id: str, sprint_name: str, __event_emitter__: Callable = None
+    ) -> tuple:
         """Find a sprint project by name within a parent project. Returns (sprint_dict, available_sprints_list)."""
-        
+
         if __event_emitter__:
             await __event_emitter__(
                 {
@@ -346,19 +367,19 @@ class Tools:
         normalized_sprint_name = sprint_name.lower().strip()
         if not normalized_sprint_name.startswith("sprint"):
             normalized_sprint_name = f"sprint {normalized_sprint_name}"
-        
+
         available_sprints = []
         search_number = re.search(r"(\d+)", normalized_sprint_name)
         exact_match = None
         substring_match = None
-        
+
         for proj in projects_data:
             if isinstance(proj, dict) and proj.get("systemType") == "PROJECT":
                 sprint_proj_name = proj.get("name", "").lower().strip()
                 if sprint_proj_name.startswith("sprint"):
                     available_sprints.append(proj.get("name", ""))
                     project_number = re.search(r"(\d+)", sprint_proj_name)
-                    
+
                     # Prefer exact number match
                     if (
                         search_number
@@ -367,9 +388,7 @@ class Tools:
                     ):
                         exact_match = proj
                     # Fallback: search number as substring anywhere in the sprint name
-                    elif (
-                        search_number and search_number.group(1) in sprint_proj_name
-                    ):
+                    elif search_number and search_number.group(1) in sprint_proj_name:
                         if not substring_match:
                             substring_match = proj
                     elif normalized_sprint_name == sprint_proj_name:
@@ -383,7 +402,7 @@ class Tools:
                             substring_match = proj
 
         result_sprint = exact_match if exact_match else substring_match
-        
+
         if __event_emitter__:
             if result_sprint:
                 await __event_emitter__(
@@ -405,10 +424,12 @@ class Tools:
                         },
                     }
                 )
-        
+
         return result_sprint, available_sprints
 
-    async def _find_user_by_name_or_email(self, user_identifier: str, __event_emitter__: Callable = None) -> tuple:
+    async def _find_user_by_name_or_email(
+        self, user_identifier: str, __event_emitter__: Callable = None
+    ) -> tuple:
         """Find a user by name or email (case-insensitive). Returns (user_dict, available_users_list)."""
         if __event_emitter__:
             await __event_emitter__(
@@ -424,25 +445,25 @@ class Tools:
         users_data = await self._make_goodday_request("users")
         if not users_data or not isinstance(users_data, list):
             return None, []
-        
+
         user_lower = user_identifier.lower().strip()
         matched_user = None
         available_users = []
-        
+
         for u in users_data:
             if not isinstance(u, dict):
                 continue
             available_users.append(u.get("name", "Unknown"))
             name = u.get("name", "").lower().strip()
             email = u.get("email", "").lower().strip()
-            
+
             if user_lower == name or user_lower == email:
                 matched_user = u
                 break
             if user_lower in name or user_lower in email:
                 matched_user = u
                 break
-        
+
         if __event_emitter__:
             if matched_user:
                 await __event_emitter__(
@@ -464,7 +485,7 @@ class Tools:
                         },
                     }
                 )
-        
+
         return matched_user, available_users
 
     # Project Management Tools
@@ -545,13 +566,19 @@ class Tools:
                     {
                         "type": "status",
                         "data": {
-                            "description": f"Retrieved {len(data)} projects, formatting results...",
+                            "description": f"Retrieved {len(data)} projects, filtering and formatting results...",
                             "done": False,
                         },
                     }
                 )
 
-            projects = [self._format_project(project) for project in data]
+            # Filter out system projects (like sprints) to avoid overwhelming the AI
+            filtered_projects = [
+                project for project in data 
+                if isinstance(project, dict) and project.get("systemType") != "PROJECT"
+            ]
+
+            projects = [self._format_project(project) for project in filtered_projects]
             result = "\n---\n".join(projects)
 
             if __event_emitter__:
@@ -610,11 +637,13 @@ class Tools:
 
         try:
             # Use helper method to find project
-            matched_project, available_projects = await self._find_project_by_name(project_name, __event_emitter__)
-            
+            matched_project, available_projects = await self._find_project_by_name(
+                project_name, __event_emitter__
+            )
+
             if not matched_project:
                 return f"Project '{project_name}' not found. Available projects: {', '.join(available_projects[:10])}{'...' if len(available_projects) > 10 else ''}"
-            
+
             project_id = matched_project.get("id")
             actual_project_name = matched_project.get("name")
 
@@ -632,8 +661,6 @@ class Tools:
             params = []
             if closed:
                 params.append("closed=true")
-            if subfolders:
-                params.append("subfolders=true")
             endpoint = f"project/{project_id}/tasks"
             if params:
                 endpoint += "?" + "&".join(params)
@@ -650,7 +677,7 @@ class Tools:
                 )
 
             data = await self._make_goodday_request(endpoint)
-            
+
             if not data:
                 return f"No tasks found in project '{actual_project_name}'."
             if isinstance(data, dict) and "error" in data:
@@ -747,11 +774,13 @@ class Tools:
 
         try:
             # Use helper method to find the main project
-            main_project, available_projects = await self._find_project_by_name(project_name, __event_emitter__)
-            
+            main_project, available_projects = await self._find_project_by_name(
+                project_name, __event_emitter__
+            )
+
             if not main_project:
                 return f"Project '{project_name}' not found. Available projects: {', '.join(available_projects[:10])}{'...' if len(available_projects) > 10 else ''}"
-            
+
             project_id = main_project.get("id")
             actual_project_name = main_project.get("name")
 
@@ -767,14 +796,16 @@ class Tools:
                 )
 
             # Use helper method to find the sprint
-            sprint_project, available_sprints = await self._find_sprint_by_name(project_id, sprint_name, __event_emitter__)
-            
+            sprint_project, available_sprints = await self._find_sprint_by_name(
+                project_id, sprint_name, __event_emitter__
+            )
+
             if not sprint_project:
                 if available_sprints:
                     return f"Sprint '{sprint_name}' not found in project {project_id}. Available sprints: {', '.join(available_sprints)}"
                 else:
                     return f"No sprints found in project {project_id}. Make sure the project ID is correct and contains sprint sub-projects."
-            
+
             sprint_id = sprint_project.get("id")
             actual_sprint_name = sprint_project.get("name")
 
@@ -792,7 +823,6 @@ class Tools:
             params = []
             if closed:
                 params.append("closed=true")
-            params.append("subfolders=true")
             endpoint = f"project/{sprint_id}/tasks"
             if params:
                 endpoint += "?" + "&".join(params)
@@ -809,7 +839,7 @@ class Tools:
                 )
 
             data = await self._make_goodday_request(endpoint)
-            
+
             if not data:
                 return f"No tasks found in sprint '{actual_sprint_name}'."
             if isinstance(data, dict) and "error" in data:
@@ -830,7 +860,7 @@ class Tools:
                     }
                 )
 
-            # Get user mapping using helper method  
+            # Get user mapping using helper method
             user_id_to_name = await self._get_user_mapping(__event_emitter__)
             user_display = self._create_user_display_function(user_id_to_name)
 
@@ -1182,11 +1212,13 @@ Please try rephrasing your query with one of these patterns."""
             )
         try:
             # Use helper method to find user
-            matched_user, available_users = await self._find_user_by_name_or_email(user, __event_emitter__)
-            
+            matched_user, available_users = await self._find_user_by_name_or_email(
+                user, __event_emitter__
+            )
+
             if not matched_user:
                 return f"User '{user}' not found. Available users: {', '.join(available_users[:10])}{'...' if len(available_users) > 10 else ''}"
-            
+
             user_id = matched_user.get("id")
             actual_user_name = matched_user.get("name")
 
@@ -1220,11 +1252,13 @@ Please try rephrasing your query with one of these patterns."""
                 )
 
             data = await self._make_goodday_request(endpoint)
-            
+
             if not data:
                 return f"No tasks found assigned to '{actual_user_name}'."
             if isinstance(data, dict) and "error" in data:
-                return f"Unable to fetch user tasks: {data.get('error', 'Unknown error')}"
+                return (
+                    f"Unable to fetch user tasks: {data.get('error', 'Unknown error')}"
+                )
             if not isinstance(data, list):
                 return f"Unexpected response format: {str(data)}"
 
@@ -1314,9 +1348,16 @@ Please try rephrasing your query with one of these patterns."""
             projects_data = await self._make_goodday_request("projects")
             if not projects_data or not isinstance(projects_data, list):
                 return "Unable to fetch projects to search for task."
+            
+            # Filter out system projects (like sprints) to avoid overwhelming the AI
+            filtered_projects = [
+                proj for proj in projects_data 
+                if isinstance(proj, dict) and proj.get("systemType") != "PROJECT"
+            ]
+            
             project_name_lower = project_name.lower().strip()
             matched_project = None
-            for proj in projects_data:
+            for proj in filtered_projects:
                 if not isinstance(proj, dict):
                     continue
                 current_project_name = proj.get("name", "").lower().strip()
@@ -1351,7 +1392,7 @@ Please try rephrasing your query with one of these patterns."""
                 )
 
             # Search for the task in the specified project
-            endpoint = f"project/{project_id}/tasks?subfolders=true"
+            endpoint = f"project/{project_id}/tasks"
             tasks_data = await self._make_goodday_request(endpoint)
             if not tasks_data or not isinstance(tasks_data, list):
                 return f"Unable to fetch tasks for project '{found_in_project}'."
@@ -1481,9 +1522,16 @@ Please try rephrasing your query with one of these patterns."""
             projects_data = await self._make_goodday_request("projects")
             if not projects_data or not isinstance(projects_data, list):
                 return "Unable to fetch projects to search for task."
+            
+            # Filter out system projects (like sprints) to avoid overwhelming the AI
+            filtered_projects = [
+                proj for proj in projects_data 
+                if isinstance(proj, dict) and proj.get("systemType") != "PROJECT"
+            ]
+            
             project_name_lower = project_name.lower().strip()
             matched_project = None
-            for proj in projects_data:
+            for proj in filtered_projects:
                 if not isinstance(proj, dict):
                     continue
                 current_project_name = proj.get("name", "").lower().strip()
@@ -1518,7 +1566,7 @@ Please try rephrasing your query with one of these patterns."""
                 )
 
             # Search for the task in the specified project
-            endpoint = f"project/{project_id}/tasks?subfolders=true"
+            endpoint = f"project/{project_id}/tasks"
             tasks_data = await self._make_goodday_request(endpoint)
             if not tasks_data or not isinstance(tasks_data, list):
                 return f"Unable to fetch tasks for project '{found_in_project}'."
@@ -1887,12 +1935,12 @@ Please try rephrasing your query with one of these patterns."""
             normalized_sprint_name = sprint_name.lower().strip()
             if not normalized_sprint_name.startswith("sprint"):
                 normalized_sprint_name = f"sprint {normalized_sprint_name}"
-            
+
             available_sprints = []
             search_number = re.search(r"(\d+)", normalized_sprint_name)
             exact_match = None
             substring_match = None
-            
+
             for proj in projects_data:
                 if isinstance(proj, dict) and proj.get("systemType") == "PROJECT":
                     sprint_proj_name = proj.get("name", "").lower().strip()
@@ -1921,7 +1969,7 @@ Please try rephrasing your query with one of these patterns."""
                         ):
                             if not substring_match:
                                 substring_match = proj
-            
+
             if exact_match:
                 return exact_match, available_sprints
             if substring_match:
@@ -2026,11 +2074,10 @@ Please try rephrasing your query with one of these patterns."""
             # Get all tasks in the sprint with closed tasks included - using same logic as get_goodday_sprint_tasks
             params = []
             params.append("closed=true")  # Always include closed tasks for summary
-            params.append("subfolders=true")
             endpoint = f"project/{sprint_id}/tasks"
             if params:
                 endpoint += "?" + "&".join(params)
-                
+
             tasks_data = await self._make_goodday_request(endpoint)
             if not tasks_data:
                 return f"No tasks found in sprint '{actual_sprint_name}'."
@@ -2184,6 +2231,261 @@ Please try rephrasing your query with one of these patterns."""
 
         except Exception as e:
             error_msg = f"Failed to retrieve sprint summary: {str(e)}"
+            if __event_emitter__:
+                await __event_emitter__(
+                    {
+                        "type": "status",
+                        "data": {"description": error_msg, "done": True},
+                    }
+                )
+            return error_msg
+
+    async def search_project_documents(
+        self,
+        project_name: str,
+        document_name: str = None,
+        include_content: bool = True,
+        __request__: Request = None,
+        __user__: dict = None,
+        __event_emitter__: Callable = None,
+    ) -> str:
+        """
+        Search for documents in a specific project by project name
+
+        :param project_name: The name of the project to search in (case-insensitive)
+        :param document_name: Optional document name to filter by (case-insensitive partial match)
+        :param include_content: Whether to include the full content of each document (default: True)
+        """
+        if __event_emitter__:
+            await __event_emitter__(
+                {
+                    "type": "status",
+                    "data": {
+                        "description": f"Searching for documents in project '{project_name}'...",
+                        "done": False,
+                    },
+                }
+            )
+
+        try:
+            # First, find the project ID by name
+            if __event_emitter__:
+                await __event_emitter__(
+                    {
+                        "type": "status",
+                        "data": {
+                            "description": f"Finding project '{project_name}'...",
+                            "done": False,
+                        },
+                    }
+                )
+
+            projects_data = await self._make_goodday_request("projects?archived=true")
+
+            if not projects_data or not isinstance(projects_data, list):
+                return "Unable to fetch projects or no projects found."
+
+            # Filter to only PROJECT and FOLDER type projects
+            project_type_projects = [p for p in projects_data if isinstance(p, dict) and p.get('systemType') in ['PROJECT', 'FOLDER']]
+
+            # Find projects containing the search term in their name (case-insensitive)
+            matching_projects = []
+            search_term = project_name.lower()
+            for project in project_type_projects:
+                if isinstance(project, dict) and search_term in project.get('name', '').lower():
+                    matching_projects.append(project)
+
+            if not matching_projects:
+                return f"No projects found containing '{project_name}' in their name."
+
+            # Use the first match
+            target_project = matching_projects[0]
+            actual_project_name = target_project.get('name')
+
+            if __event_emitter__:
+                await __event_emitter__(
+                    {
+                        "type": "status",
+                        "data": {
+                            "description": f"Found project '{actual_project_name}' (using first match of {len(matching_projects)} found)",
+                            "done": False,
+                        },
+                    }
+                )
+
+            project_id = target_project.get('id')
+            if not project_id:
+                return f"Project '{actual_project_name}' found but missing ID."
+
+            # Get documents for the project
+            if __event_emitter__:
+                await __event_emitter__(
+                    {
+                        "type": "status",
+                        "data": {
+                            "description": f"Fetching documents from project '{actual_project_name}'...",
+                            "done": False,
+                        },
+                    }
+                )
+
+            documents_data = await self._make_goodday_request(f"project/{project_id}/documents")
+
+            if not documents_data:
+                return f"No documents found in project '{actual_project_name}'."
+
+            if isinstance(documents_data, dict) and "error" in documents_data:
+                return f"Unable to fetch documents: {documents_data.get('error', 'Unknown error')}"
+
+            if not isinstance(documents_data, list):
+                return f"Unexpected response format for documents: {str(documents_data)}"
+
+            # Filter documents by name if specified
+            if document_name:
+                filtered_documents = []
+                for doc in documents_data:
+                    if isinstance(doc, dict) and document_name.lower() in doc.get('name', '').lower():
+                        filtered_documents.append(doc)
+                documents_data = filtered_documents
+
+            if not documents_data:
+                return f"No documents found matching '{document_name}' in project '{actual_project_name}'."
+
+            # Format documents
+            if __event_emitter__:
+                await __event_emitter__(
+                    {
+                        "type": "status",
+                        "data": {
+                            "description": f"Formatting {len(documents_data)} documents{' and fetching content' if include_content else ''}...",
+                            "done": False,
+                        },
+                    }
+                )
+
+            formatted_docs = []
+            for doc in documents_data:
+                if isinstance(doc, dict):
+                    doc_id = doc.get('id', 'N/A')
+                    doc_content = ""
+                    
+                    # Fetch content if requested
+                    if include_content and doc_id != 'N/A':
+                        try:
+                            if __event_emitter__:
+                                await __event_emitter__(
+                                    {
+                                        "type": "status",
+                                        "data": {
+                                            "description": f"Fetching content for document '{doc.get('name', 'N/A')}'...",
+                                            "done": False,
+                                        },
+                                    }
+                                )
+                            
+                            content_data = await self._make_goodday_request(f"document/{doc_id}")
+                            if content_data:
+                                if isinstance(content_data, dict):
+                                    doc_content = content_data.get('content', content_data.get('text', str(content_data)))
+                                else:
+                                    doc_content = str(content_data)
+                        except Exception as e:
+                            doc_content = f"Error fetching content: {str(e)}"
+                    
+                    formatted_doc = f"""
+**Document ID:** {doc_id}
+**Name:** {doc.get('name', 'N/A')}
+**Project ID:** {doc.get('projectId', 'N/A')}
+**Created By:** {doc.get('createdByUserId', 'N/A')}
+**Created:** {doc.get('momentCreated', 'N/A')}
+**Updated:** {doc.get('momentUpdated', 'N/A')}"""
+                    
+                    if include_content:
+                        formatted_doc += f"\n**Content:**\n{doc_content}"
+                    
+                    formatted_docs.append(formatted_doc.strip())
+
+            result = "\n---\n".join(formatted_docs)
+
+            if __event_emitter__:
+                await __event_emitter__(
+                    {
+                        "type": "status",
+                        "data": {
+                            "description": f"Successfully found {len(documents_data)} documents",
+                            "done": True,
+                        },
+                    }
+                )
+
+            filter_text = f" matching '{document_name}'" if document_name else ""
+            return f"**Documents in project '{actual_project_name}'{filter_text}:**\n\n{result}"
+
+        except Exception as e:
+            error_msg = f"Failed to search project documents: {str(e)}"
+            if __event_emitter__:
+                await __event_emitter__(
+                    {
+                        "type": "status",
+                        "data": {"description": error_msg, "done": True},
+                    }
+                )
+            return error_msg
+
+    async def get_document_content(
+        self,
+        document_id: str,
+        __request__: Request = None,
+        __user__: dict = None,
+        __event_emitter__: Callable = None,
+    ) -> str:
+        """
+        Get the content of a specific document by its ID
+
+        :param document_id: The ID of the document to retrieve
+        """
+        if __event_emitter__:
+            await __event_emitter__(
+                {
+                    "type": "status",
+                    "data": {
+                        "description": f"Fetching document content for ID '{document_id}'...",
+                        "done": False,
+                    },
+                }
+            )
+
+        try:
+            data = await self._make_goodday_request(f"document/{document_id}")
+
+            if not data:
+                return "Document not found or no content available."
+
+            if isinstance(data, dict) and "error" in data:
+                return f"Unable to fetch document: {data.get('error', 'Unknown error')}"
+
+            # The document content might be in different formats
+            # Assuming it's a dict with content field or direct content
+            if isinstance(data, dict):
+                content = data.get('content', data.get('text', str(data)))
+            else:
+                content = str(data)
+
+            if __event_emitter__:
+                await __event_emitter__(
+                    {
+                        "type": "status",
+                        "data": {
+                            "description": "Successfully retrieved document content",
+                            "done": True,
+                        },
+                    }
+                )
+
+            return f"**Document Content:**\n\n{content}"
+
+        except Exception as e:
+            error_msg = f"Failed to retrieve document content: {str(e)}"
             if __event_emitter__:
                 await __event_emitter__(
                     {
