@@ -3,8 +3,8 @@ from goodday_openwebui_complete_tool import Tools
 
 async def main():
     tools = Tools()
-    # Optionally set your API key here if not using env var
-    # tools.valves.api_key = "your_goodday_api_token"
+    # Set your API key here - replace with your actual Goodday API token
+    tools.valves.api_key = "your_goodday_api_token_here"  # Replace with actual token
 
     print(f"Searching for project: ASTRA")
     

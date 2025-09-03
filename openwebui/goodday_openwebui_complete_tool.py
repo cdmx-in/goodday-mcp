@@ -10,6 +10,8 @@ required_open_webui_version: 0.5.3
 import os
 import re
 import httpx
+import time
+from datetime import datetime, timezone, timedelta
 from typing import Callable
 from fastapi import Request
 from pydantic import BaseModel, Field
@@ -275,6 +277,57 @@ class Tools:
             return name if name else f"User {user_id}"
 
         return user_display
+
+    def _format_timestamp_ist(self, timestamp_str: str) -> str:
+        """Format ISO timestamp to IST 12-hour format."""
+        if not timestamp_str or timestamp_str == 'N/A':
+            return 'N/A'
+        
+        try:
+            # Parse ISO timestamp (assuming UTC)
+            dt = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
+            
+            # Convert to IST (UTC+5:30)
+            ist_tz = timezone(timedelta(hours=5, minutes=30))
+            dt_ist = dt.astimezone(ist_tz)
+            
+            # Format as 12-hour with AM/PM
+            return dt_ist.strftime('%d %b %Y, %I:%M %p')
+        except Exception:
+            return timestamp_str  # Return original if parsing fails
+
+    async def _get_project_mapping(self, __event_emitter__: Callable = None) -> dict:
+        """Get project ID to name mapping for displaying project names instead of IDs."""
+        if __event_emitter__:
+            await __event_emitter__(
+                {
+                    "type": "status",
+                    "data": {
+                        "description": "Fetching project data for name mapping...",
+                        "done": False,
+                    },
+                }
+            )
+
+        projects_data = await self._make_goodday_request("projects?archived=true")
+        project_id_to_name = {}
+        if isinstance(projects_data, list):
+            for p in projects_data:
+                if isinstance(p, dict):
+                    project_id_to_name[p.get("id")] = p.get("name", "Unknown")
+
+        if __event_emitter__:
+            await __event_emitter__(
+                {
+                    "type": "status",
+                    "data": {
+                        "description": f"Loaded {len(project_id_to_name)} projects for name mapping",
+                        "done": False,
+                    },
+                }
+            )
+
+        return project_id_to_name
 
     async def _find_project_by_name(
         self, project_name: str, __event_emitter__: Callable = None
@@ -2244,7 +2297,7 @@ Please try rephrasing your query with one of these patterns."""
         self,
         project_name: str,
         document_name: str = None,
-        include_content: bool = True,
+        include_content: bool = False,
         __request__: Request = None,
         __user__: dict = None,
         __event_emitter__: Callable = None,
@@ -2254,7 +2307,7 @@ Please try rephrasing your query with one of these patterns."""
 
         :param project_name: The name of the project to search in (case-insensitive)
         :param document_name: Optional document name to filter by (case-insensitive partial match)
-        :param include_content: Whether to include the full content of each document (default: True)
+        :param include_content: Whether to include the full content of each document (default: False)
         """
         if __event_emitter__:
             await __event_emitter__(
@@ -2363,6 +2416,10 @@ Please try rephrasing your query with one of these patterns."""
                     }
                 )
 
+            # Get user and project mappings for better display
+            user_id_to_name = await self._get_user_mapping(__event_emitter__)
+            project_id_to_name = await self._get_project_mapping(__event_emitter__)
+
             formatted_docs = []
             for doc in documents_data:
                 if isinstance(doc, dict):
@@ -2392,13 +2449,24 @@ Please try rephrasing your query with one of these patterns."""
                         except Exception as e:
                             doc_content = f"Error fetching content: {str(e)}"
                     
+                    # Get display names
+                    project_id = doc.get('projectId', 'N/A')
+                    project_name = project_id_to_name.get(project_id, f"Project {project_id}") if project_id != 'N/A' else 'N/A'
+                    
+                    created_by_id = doc.get('createdByUserId', 'N/A')
+                    created_by_name = user_id_to_name.get(created_by_id, f"User {created_by_id}") if created_by_id != 'N/A' else 'N/A'
+                    
+                    # Format timestamps
+                    created_time = self._format_timestamp_ist(doc.get('momentCreated', 'N/A'))
+                    updated_time = self._format_timestamp_ist(doc.get('momentUpdated', 'N/A'))
+                    
                     formatted_doc = f"""
 **Document ID:** {doc_id}
 **Name:** {doc.get('name', 'N/A')}
-**Project ID:** {doc.get('projectId', 'N/A')}
-**Created By:** {doc.get('createdByUserId', 'N/A')}
-**Created:** {doc.get('momentCreated', 'N/A')}
-**Updated:** {doc.get('momentUpdated', 'N/A')}"""
+**Project:** {project_name}
+**Created By:** {created_by_name}
+**Created:** {created_time}
+**Updated:** {updated_time}"""
                     
                     if include_content:
                         formatted_doc += f"\n**Content:**\n{doc_content}"

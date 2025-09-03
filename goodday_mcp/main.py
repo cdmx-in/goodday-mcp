@@ -1,7 +1,8 @@
 from typing import Any, Optional, List
 import httpx
 import os
-from datetime import datetime
+import re
+from datetime import datetime, timezone, timedelta
 from mcp.server.fastmcp import FastMCP
 
 # Initialize FastMCP server
@@ -9,7 +10,7 @@ mcp = FastMCP("goodday-mcp")
 
 # Constants
 GOODDAY_API_BASE = "https://api.goodday.work/2.0"
-USER_AGENT = "goodday-mcp/1.0"
+USER_AGENT = "goodday-mcp/1.1.0"
 
 async def make_goodday_request(endpoint: str, method: str = "GET", data: dict = None) -> dict[str, Any] | list[Any] | None:
     """Make a request to the Goodday API with proper error handling."""
@@ -110,6 +111,140 @@ Email: {user.get('email', 'N/A')}
 Role: {role.get('name', 'N/A')}
 Status: {user.get('status', 'N/A')}
 """.strip()
+
+def format_timestamp_ist(timestamp_str: str) -> str:
+    """Format timestamp to IST timezone."""
+    if not timestamp_str or timestamp_str == 'N/A':
+        return 'N/A'
+    try:
+        # Parse the timestamp (assuming it's in ISO format)
+        dt = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
+        # Convert to IST (UTC+5:30)
+        ist_offset = timedelta(hours=5, minutes=30)
+        ist_time = dt + ist_offset
+        return ist_time.strftime('%Y-%m-%d %H:%M:%S IST')
+    except Exception:
+        return timestamp_str
+
+async def get_user_mapping() -> dict:
+    """Get mapping of user IDs to names."""
+    data = await make_goodday_request("users")
+    user_id_to_name = {}
+    if isinstance(data, list):
+        for u in data:
+            if isinstance(u, dict):
+                user_id_to_name[u.get("id")] = u.get("name", "Unknown")
+    return user_id_to_name
+
+async def get_project_mapping() -> dict:
+    """Get mapping of project IDs to names."""
+    data = await make_goodday_request("projects")
+    project_id_to_name = {}
+    if isinstance(data, list):
+        for p in data:
+            if isinstance(p, dict):
+                project_id_to_name[p.get("id")] = p.get("name", "Unknown")
+    return project_id_to_name
+
+async def find_project_by_name(project_name: str) -> tuple[Optional[dict], List[str]]:
+    """Find project by name (case-insensitive)."""
+    projects_data = await make_goodday_request("projects")
+    if not projects_data or not isinstance(projects_data, list):
+        return None, []
+    
+    # Filter out system projects (like sprints) to avoid overwhelming the AI
+    filtered_projects = [
+        proj for proj in projects_data 
+        if isinstance(proj, dict) and proj.get("systemType") != "PROJECT"
+    ]
+    
+    project_name_lower = project_name.lower().strip()
+    matched_project = None
+    for proj in filtered_projects:
+        if not isinstance(proj, dict):
+            continue
+        current_project_name = proj.get("name", "").lower().strip()
+        if current_project_name == project_name_lower:
+            matched_project = proj
+            break
+        if (
+            project_name_lower in current_project_name
+            or current_project_name in project_name_lower
+        ):
+            matched_project = proj
+            break
+    
+    available_projects = [
+        p.get("name", "Unknown")
+        for p in projects_data
+        if isinstance(p, dict)
+    ]
+    return matched_project, available_projects
+
+async def find_sprint_by_name(parent_project_id: str, sprint_name: str) -> tuple[Optional[dict], List[str]]:
+    """Find sprint project by name within a parent project."""
+    projects_data = await make_goodday_request("projects")
+    if not projects_data or not isinstance(projects_data, list):
+        return None, []
+    
+    normalized_sprint_name = sprint_name.lower().strip()
+    if not normalized_sprint_name.startswith("sprint"):
+        normalized_sprint_name = f"sprint {normalized_sprint_name}"
+
+    available_sprints = []
+    search_number = re.search(r"(\d+)", normalized_sprint_name)
+    exact_match = None
+    substring_match = None
+
+    for proj in projects_data:
+        if isinstance(proj, dict) and proj.get("systemType") == "PROJECT":
+            sprint_proj_name = proj.get("name", "").lower().strip()
+            if sprint_proj_name.startswith("sprint"):
+                available_sprints.append(proj.get("name", ""))
+                project_number = re.search(r"(\d+)", sprint_proj_name)
+                # Prefer exact number match
+                if (
+                    search_number
+                    and project_number
+                    and search_number.group(1) == project_number.group(1)
+                ):
+                    exact_match = proj
+                # Fallback: search number as substring anywhere in the sprint name
+                elif (
+                    search_number and search_number.group(1) in sprint_proj_name
+                ):
+                    if not substring_match:
+                        substring_match = proj
+                elif normalized_sprint_name == sprint_proj_name:
+                    if not exact_match:
+                        exact_match = proj
+                elif (
+                    normalized_sprint_name in sprint_proj_name
+                    or sprint_proj_name in normalized_sprint_name
+                ):
+                    if not substring_match:
+                        substring_match = proj
+
+    if exact_match:
+        return exact_match, available_sprints
+    if substring_match:
+        return substring_match, available_sprints
+    return None, available_sprints
+
+async def find_user_by_name_or_email(user_identifier: str) -> Optional[dict]:
+    """Find user by name or email (case-insensitive)."""
+    users_data = await make_goodday_request("users")
+    if not users_data or not isinstance(users_data, list):
+        return None
+    
+    user_identifier_lower = user_identifier.lower().strip()
+    for user in users_data:
+        if isinstance(user, dict):
+            user_name = user.get("name", "").lower().strip()
+            user_email = user.get("email", "").lower().strip()
+            if user_identifier_lower in user_name or user_identifier_lower in user_email:
+                return user
+    return None
 
 # Project Management Tools
 @mcp.tool()
@@ -496,6 +631,532 @@ async def get_project_users(project_id: str) -> str:
     
     users = [format_user(user) for user in data]
     return "\n---\n".join(users)
+
+# Enhanced Task Management Tools
+@mcp.tool()
+async def get_task_details(task_short_id: str, project_name: str) -> str:
+    """Get comprehensive task details including subtasks, custom fields, and full metadata.
+
+    Args:
+        task_short_id: The short ID of the task (e.g., RAD-434)
+        project_name: The name of the project containing the task (required, case-insensitive)
+    """
+    # Find the project
+    matched_project, available_projects = await find_project_by_name(project_name)
+    if not matched_project:
+        return f"Project '{project_name}' not found. Available projects: {', '.join(available_projects[:10])}{'...' if len(available_projects) > 10 else ''}"
+    
+    project_id = matched_project.get("id")
+    found_in_project = matched_project.get("name")
+
+    # Find the task
+    tasks_data = await make_goodday_request(f"project/{project_id}/tasks")
+    if not tasks_data or not isinstance(tasks_data, list):
+        return f"Unable to fetch tasks for project '{found_in_project}'."
+    
+    task_id = None
+    task_data = None
+    for task in tasks_data:
+        if isinstance(task, dict) and task.get("shortId") == task_short_id:
+            task_id = task.get("id")
+            task_data = task
+            break
+    
+    if not task_id or not task_data:
+        return f"Task with short ID '{task_short_id}' not found in project '{found_in_project}'."
+
+    # Get detailed task information
+    detailed_data = await make_goodday_request(f"task/{task_id}")
+    if not detailed_data:
+        return f"No details found for task '{task_short_id}'."
+    
+    if isinstance(detailed_data, dict) and "error" in detailed_data:
+        return f"Unable to fetch task details: {detailed_data.get('error', 'Unknown error')}"
+
+    # Get task messages for description
+    messages_data = await make_goodday_request(f"task/{task_id}/messages")
+    first_message = "No description"
+    if messages_data and isinstance(messages_data, list) and len(messages_data) > 0:
+        first_msg = messages_data[0]
+        if isinstance(first_msg, dict):
+            first_message = first_msg.get("message", "No description")
+
+    # Get user mapping
+    user_id_to_name = await get_user_mapping()
+    
+    def user_display(user_id):
+        if not user_id:
+            return "N/A"
+        name = user_id_to_name.get(user_id)
+        return f"{name} ({user_id})" if name else user_id
+
+    # Format comprehensive details
+    status = detailed_data.get("status", {}) if isinstance(detailed_data.get("status"), dict) else {}
+    task_type = detailed_data.get("taskType", {}) if isinstance(detailed_data.get("taskType"), dict) else {}
+    custom_fields = detailed_data.get("customFieldsData", {}) if isinstance(detailed_data.get("customFieldsData"), dict) else {}
+    subtasks = detailed_data.get("subtasks", []) if isinstance(detailed_data.get("subtasks"), list) else []
+    users = detailed_data.get("users", []) if isinstance(detailed_data.get("users"), list) else []
+
+    formatted_details = f"""
+**Task ID:** {detailed_data.get('shortId', 'N/A')}
+**Name:** {detailed_data.get('name', 'N/A')}
+**Project:** {found_in_project}
+**Status:** {status.get('name', 'N/A')}
+**Task Type:** {task_type.get('name', 'N/A')}
+**Priority:** {detailed_data.get('priority', 'N/A')}
+**Assigned To:** {user_display(detailed_data.get('assignedToUserId'))}
+**Action Required:** {user_display(detailed_data.get('actionRequiredUserId'))}
+**Created By:** {user_display(detailed_data.get('createdByUserId'))}
+**Start Date:** {detailed_data.get('startDate', 'N/A')}
+**End Date:** {detailed_data.get('endDate', 'N/A')}
+**Deadline:** {detailed_data.get('deadline', 'N/A')}
+**Estimate:** {detailed_data.get('estimate', 'N/A')}
+**Reported Time:** {detailed_data.get('reportedTime', 'N/A')}
+**Users:** {', '.join([user_display(uid) for uid in users]) if users else 'N/A'}
+**Subtasks Count:** {len(subtasks)}
+**Description:** {first_message}
+""".strip()
+
+    # Add custom fields if they exist
+    if custom_fields:
+        formatted_details += "\n\n**Custom Fields:**"
+        for field_id, field_value in custom_fields.items():
+            formatted_details += f"\n- {field_id}: {field_value}"
+
+    # Add subtasks if they exist
+    if subtasks:
+        formatted_details += f"\n\n**Subtasks ({len(subtasks)}):**"
+        for i, subtask in enumerate(subtasks[:10]):
+            if isinstance(subtask, dict):
+                formatted_details += f"\n- {subtask.get('shortId', 'N/A')}: {subtask.get('name', 'N/A')}"
+        if len(subtasks) > 10:
+            formatted_details += f"\n... and {len(subtasks) - 10} more subtasks"
+
+    return f"**Task Details for '{task_short_id}' in project '{found_in_project}':**\n\n{formatted_details}"
+
+@mcp.tool()
+async def get_task_messages(task_short_id: str, project_name: Optional[str] = None) -> str:
+    """Retrieve all messages/comments for a specific task.
+
+    Args:
+        task_short_id: The short ID of the task (e.g., RAD-434)
+        project_name: Optional project name for disambiguation
+    """
+    # If project name is provided, use it to find the project
+    if project_name:
+        matched_project, available_projects = await find_project_by_name(project_name)
+        if not matched_project:
+            return f"Project '{project_name}' not found. Available projects: {', '.join(available_projects[:10])}{'...' if len(available_projects) > 10 else ''}"
+        project_id = matched_project.get("id")
+        found_in_project = matched_project.get("name")
+    else:
+        # Search across all projects
+        projects_data = await make_goodday_request("projects")
+        if not projects_data or not isinstance(projects_data, list):
+            return "Unable to fetch projects."
+        
+        task_id = None
+        found_in_project = None
+        for proj in projects_data:
+            if isinstance(proj, dict):
+                proj_id = proj.get("id")
+                tasks_data = await make_goodday_request(f"project/{proj_id}/tasks")
+                if isinstance(tasks_data, list):
+                    for task in tasks_data:
+                        if isinstance(task, dict) and task.get("shortId") == task_short_id:
+                            task_id = task.get("id")
+                            found_in_project = proj.get("name")
+                            break
+            if task_id:
+                break
+        
+        if not task_id:
+            return f"Task with short ID '{task_short_id}' not found in any project."
+
+    # Get task messages
+    messages_data = await make_goodday_request(f"task/{task_id}/messages")
+    if not messages_data:
+        return f"No messages found for task '{task_short_id}'."
+    
+    if isinstance(messages_data, dict) and "error" in messages_data:
+        return f"Unable to fetch messages: {messages_data.get('error', 'Unknown error')}"
+    
+    if not isinstance(messages_data, list):
+        return f"Unexpected response format: {str(messages_data)}"
+
+    # Get user mapping
+    user_id_to_name = await get_user_mapping()
+    
+    def user_display(user_id):
+        if not user_id:
+            return "N/A"
+        name = user_id_to_name.get(user_id)
+        return f"{name} ({user_id})" if name else user_id
+
+    # Format messages
+    formatted_messages = []
+    for msg in messages_data:
+        if not isinstance(msg, dict):
+            continue
+
+        formatted_msg = f"""
+**Message ID:** {msg.get('id', 'N/A')}
+**Date Created:** {format_timestamp_ist(msg.get('dateCreated', 'N/A'))}
+**From User:** {user_display(msg.get('fromUserId'))}
+**To User:** {user_display(msg.get('toUserId'))}
+**Message:** {msg.get('message', 'No message content')}
+**Task Status ID:** {msg.get('taskStatusId', 'N/A')}
+""".strip()
+        formatted_messages.append(formatted_msg)
+
+    result = "\n---\n".join(formatted_messages)
+    return f"**Messages for Task '{task_short_id}' in project '{found_in_project}' - {len(messages_data)} messages:**\n\n{result}"
+
+# Sprint Management Tools
+@mcp.tool()
+async def get_goodday_sprint_tasks(project_name: str, sprint_name: str, include_closed: bool = True) -> str:
+    """Get tasks from a specific sprint by project name and sprint name/number.
+
+    Args:
+        project_name: The name of the main project (e.g., "ASTRA")
+        sprint_name: The name or number of the sprint (e.g., "Sprint 233", "233")
+        include_closed: Whether to include closed tasks (default: True)
+    """
+    # Find main project
+    matched_project, available_projects = await find_project_by_name(project_name)
+    if not matched_project:
+        return f"Project '{project_name}' not found. Available projects: {', '.join(available_projects[:10])}{'...' if len(available_projects) > 10 else ''}"
+
+    main_project_id = matched_project.get("id")
+    actual_project_name = matched_project.get("name")
+
+    # Find sprint project
+    sprint_project, available_sprints = await find_sprint_by_name(main_project_id, sprint_name)
+    if not sprint_project:
+        if available_sprints:
+            return f"Sprint '{sprint_name}' not found. Available sprints: {', '.join(available_sprints)}"
+        else:
+            return f"No sprints found under project '{actual_project_name}'."
+
+    sprint_id = sprint_project.get("id")
+    actual_sprint_name = sprint_project.get("name")
+
+    # Get tasks from sprint
+    params = []
+    if include_closed:
+        params.append("closed=true")
+    endpoint = f"project/{sprint_id}/tasks"
+    if params:
+        endpoint += "?" + "&".join(params)
+
+    tasks_data = await make_goodday_request(endpoint)
+    if not tasks_data:
+        return f"No tasks found in sprint '{actual_sprint_name}'."
+    
+    if isinstance(tasks_data, dict) and "error" in tasks_data:
+        return f"Unable to fetch sprint tasks: {tasks_data.get('error', 'Unknown error')}"
+    
+    if not isinstance(tasks_data, list):
+        return f"Unexpected response format: {str(tasks_data)}"
+
+    # Get user mapping
+    user_id_to_name = await get_user_mapping()
+    
+    def user_display(user_id):
+        if not user_id:
+            return "Unassigned"
+        name = user_id_to_name.get(user_id)
+        return name if name else f"User {user_id}"
+
+    # Format tasks
+    formatted_tasks = []
+    for task in tasks_data:
+        if not isinstance(task, dict):
+            continue
+
+        status = task.get("status", {}) if isinstance(task.get("status"), dict) else {}
+        status_name = status.get("name", "Unknown Status")
+        assigned_user_id = task.get("assignedToUserId")
+        assigned_user = user_display(assigned_user_id)
+
+        formatted_task = f"""
+**{task.get('shortId', 'N/A')}**: {task.get('name', 'No title')}
+- **Status**: {status_name}
+- **Assigned To**: {assigned_user}
+- **Priority**: {task.get('priority', 'N/A')}
+""".strip()
+        formatted_tasks.append(formatted_task)
+
+    result = "\n---\n".join(formatted_tasks)
+    return f"**Tasks in Sprint '{actual_sprint_name}' (Project: '{actual_project_name}') - {len(tasks_data)} tasks:**\n\n{result}"
+
+@mcp.tool()
+async def get_goodday_sprint_summary(project_name: str, sprint_name: str) -> str:
+    """Generate a comprehensive sprint summary with task details, status distribution, and key metrics.
+
+    Args:
+        project_name: The name of the main project (e.g., "ASTRA")
+        sprint_name: The name or number of the sprint (e.g., "Sprint 233", "233")
+    """
+    # Find main project
+    matched_project, available_projects = await find_project_by_name(project_name)
+    if not matched_project:
+        return f"Project '{project_name}' not found. Available projects: {', '.join(available_projects[:10])}{'...' if len(available_projects) > 10 else ''}"
+
+    main_project_id = matched_project.get("id")
+    actual_project_name = matched_project.get("name")
+
+    # Find sprint project
+    sprint_project, available_sprints = await find_sprint_by_name(main_project_id, sprint_name)
+    if not sprint_project:
+        if available_sprints:
+            return f"Sprint '{sprint_name}' not found. Available sprints: {', '.join(available_sprints)}"
+        else:
+            return f"No sprints found under project '{actual_project_name}'."
+
+    sprint_id = sprint_project.get("id")
+    actual_sprint_name = sprint_project.get("name")
+
+    # Get all tasks with closed tasks included
+    endpoint = f"project/{sprint_id}/tasks?closed=true"
+    tasks_data = await make_goodday_request(endpoint)
+    if not tasks_data:
+        return f"No tasks found in sprint '{actual_sprint_name}'."
+    
+    if isinstance(tasks_data, dict) and "error" in tasks_data:
+        return f"Unable to fetch sprint tasks: {tasks_data.get('error', 'Unknown error')}"
+    
+    if not isinstance(tasks_data, list):
+        return f"Unexpected response format: {str(tasks_data)}"
+
+    # Get user mapping
+    user_id_to_name = await get_user_mapping()
+    
+    def user_display(user_id):
+        if not user_id:
+            return "Unassigned"
+        name = user_id_to_name.get(user_id)
+        return name if name else f"User {user_id}"
+
+    # Analyze tasks
+    status_counts = {}
+    user_task_counts = {}
+    task_summaries = []
+
+    for task in tasks_data:
+        if not isinstance(task, dict):
+            continue
+
+        task_short_id = task.get("shortId", "N/A")
+        task_name = task.get("name", "No title")
+        status = task.get("status", {}) if isinstance(task.get("status"), dict) else {}
+        status_name = status.get("name", "Unknown Status")
+        assigned_user_id = task.get("assignedToUserId")
+        assigned_user = user_display(assigned_user_id)
+
+        # Count statistics
+        status_counts[status_name] = status_counts.get(status_name, 0) + 1
+        user_task_counts[assigned_user] = user_task_counts.get(assigned_user, 0) + 1
+
+        # Get task description
+        task_description = "No description available"
+        task_id = task.get("id")
+        if task_id:
+            try:
+                messages_endpoint = f"task/{task_id}/messages"
+                messages_data = await make_goodday_request(messages_endpoint)
+                if messages_data and isinstance(messages_data, list) and len(messages_data) > 0:
+                    first_msg = messages_data[0]
+                    if isinstance(first_msg, dict):
+                        task_description = first_msg.get("message", "No description available")
+            except Exception:
+                pass
+
+        task_summary = f"""
+**{task_short_id}**: {task_name}
+- **Status**: {status_name}
+- **Assigned To**: {assigned_user}
+- **Description**: {task_description}
+""".strip()
+        task_summaries.append(task_summary)
+
+    # Build summary
+    summary_parts = []
+    summary_parts.append(f"**Sprint Overview:**\n- **Sprint**: {actual_sprint_name}\n- **Project**: {actual_project_name}\n- **Total Tasks**: {len(tasks_data)}")
+
+    if status_counts:
+        status_list = [f"  - {status}: {count}" for status, count in sorted(status_counts.items())]
+        summary_parts.append(f"**Status Distribution:**\n{chr(10).join(status_list)}")
+
+    if user_task_counts:
+        user_list = [f"  - {user}: {count} tasks" for user, count in sorted(user_task_counts.items(), key=lambda x: x[1], reverse=True)]
+        summary_parts.append(f"**Task Assignment:**\n{chr(10).join(user_list)}")
+
+    if task_summaries:
+        summary_parts.append(f"**Task Details:**\n{chr(10).join(['---'] + task_summaries)}")
+
+    result = "\n\n".join(summary_parts)
+    return f"**Sprint Summary for '{actual_sprint_name}' in '{actual_project_name}':**\n\n{result}"
+
+# Smart Query Tool
+@mcp.tool()
+async def get_goodday_smart_query(query: str) -> str:
+    """Natural language interface for common project management queries.
+
+    Args:
+        query: Natural language query (e.g., "show me all tasks assigned to John", "what projects do I have")
+    """
+    query_lower = query.lower().strip()
+    
+    # Parse common query patterns
+    if "projects" in query_lower and ("my" in query_lower or "i have" in query_lower):
+        return await get_projects()
+    elif "users" in query_lower or "team members" in query_lower:
+        return await get_users()
+    elif "assigned to" in query_lower:
+        # Extract user name from query
+        user_match = re.search(r"assigned to (\w+)", query_lower)
+        if user_match:
+            user_name = user_match.group(1)
+            user = await find_user_by_name_or_email(user_name)
+            if user:
+                return await get_user_assigned_tasks(user.get("id"))
+            else:
+                return f"User '{user_name}' not found."
+        else:
+            return "Please specify a user name for assigned tasks query."
+    elif "action required" in query_lower:
+        # Extract user name from query
+        user_match = re.search(r"action required (?:for|by) (\w+)", query_lower)
+        if user_match:
+            user_name = user_match.group(1)
+            user = await find_user_by_name_or_email(user_name)
+            if user:
+                return await get_user_action_required_tasks(user.get("id"))
+            else:
+                return f"User '{user_name}' not found."
+        else:
+            return "Please specify a user name for action required tasks query."
+    else:
+        return f"Query not recognized. Try queries like:\n- 'show me all projects'\n- 'show me all users'\n- 'show tasks assigned to [user]'\n- 'show action required tasks for [user]'"
+
+# Document Management Tools
+@mcp.tool()
+async def search_project_documents(project_name: str, document_name: Optional[str] = None, include_content: bool = False) -> str:
+    """Search for documents in a specific project.
+
+    Args:
+        project_name: The name of the project to search in (case-insensitive)
+        document_name: Optional document name to filter by (case-insensitive partial match)
+        include_content: Whether to include the full content of each document
+    """
+    # Find project
+    projects_data = await make_goodday_request("projects?archived=true")
+    if not projects_data or not isinstance(projects_data, list):
+        return "Unable to fetch projects."
+
+    project_type_projects = [p for p in projects_data if isinstance(p, dict) and p.get('systemType') in ['PROJECT', 'FOLDER']]
+    matching_projects = []
+    search_term = project_name.lower()
+    for project in project_type_projects:
+        if isinstance(project, dict) and search_term in project.get('name', '').lower():
+            matching_projects.append(project)
+
+    if not matching_projects:
+        return f"No projects found containing '{project_name}' in their name."
+
+    target_project = matching_projects[0]
+    actual_project_name = target_project.get('name')
+    project_id = target_project.get('id')
+
+    # Get documents
+    documents_data = await make_goodday_request(f"project/{project_id}/documents")
+    if not documents_data:
+        return f"No documents found in project '{actual_project_name}'."
+
+    if isinstance(documents_data, dict) and "error" in documents_data:
+        return f"Unable to fetch documents: {documents_data.get('error', 'Unknown error')}"
+
+    if not isinstance(documents_data, list):
+        return f"Unexpected response format for documents: {str(documents_data)}"
+
+    # Filter by document name if specified
+    if document_name:
+        filtered_documents = []
+        for doc in documents_data:
+            if isinstance(doc, dict) and document_name.lower() in doc.get('name', '').lower():
+                filtered_documents.append(doc)
+        documents_data = filtered_documents
+
+    if not documents_data:
+        return f"No documents found matching '{document_name}' in project '{actual_project_name}'."
+
+    # Get mappings
+    user_id_to_name = await get_user_mapping()
+    project_id_to_name = await get_project_mapping()
+
+    # Format documents
+    formatted_docs = []
+    for doc in documents_data:
+        if isinstance(doc, dict):
+            doc_id = doc.get('id', 'N/A')
+            doc_content = ""
+            
+            if include_content and doc_id != 'N/A':
+                try:
+                    content_data = await make_goodday_request(f"document/{doc_id}")
+                    if content_data:
+                        if isinstance(content_data, dict):
+                            doc_content = content_data.get('content', content_data.get('text', str(content_data)))
+                        else:
+                            doc_content = str(content_data)
+                except Exception as e:
+                    doc_content = f"Error fetching content: {str(e)}"
+            
+            project_id_val = doc.get('projectId', 'N/A')
+            project_name_val = project_id_to_name.get(project_id_val, f"Project {project_id_val}") if project_id_val != 'N/A' else 'N/A'
+            
+            created_by_id = doc.get('createdByUserId', 'N/A')
+            created_by_name = user_id_to_name.get(created_by_id, f"User {created_by_id}") if created_by_id != 'N/A' else 'N/A'
+            
+            formatted_doc = f"""
+**Document ID:** {doc_id}
+**Name:** {doc.get('name', 'N/A')}
+**Project:** {project_name_val}
+**Created By:** {created_by_name}
+**Created:** {format_timestamp_ist(doc.get('momentCreated', 'N/A'))}
+**Updated:** {format_timestamp_ist(doc.get('momentUpdated', 'N/A'))}"""
+            
+            if include_content:
+                formatted_doc += f"\n**Content:**\n{doc_content}"
+            
+            formatted_docs.append(formatted_doc.strip())
+
+    result = "\n---\n".join(formatted_docs)
+    filter_text = f" matching '{document_name}'" if document_name else ""
+    return f"**Documents in project '{actual_project_name}'{filter_text}:**\n\n{result}"
+
+@mcp.tool()
+async def get_document_content(document_id: str) -> str:
+    """Get the content of a specific document by its ID.
+
+    Args:
+        document_id: The ID of the document to retrieve
+    """
+    data = await make_goodday_request(f"document/{document_id}")
+
+    if not data:
+        return "Document not found or no content available."
+
+    if isinstance(data, dict) and "error" in data:
+        return f"Unable to fetch document: {data.get('error', 'Unknown error')}"
+
+    if isinstance(data, dict):
+        content = data.get('content', data.get('text', str(data)))
+    else:
+        content = str(data)
+
+    return f"**Document Content:**\n\n{content}"
 
 def run_cli():
     """CLI entry point for the goodday-mcp server."""

@@ -15,25 +15,40 @@ A Model Context Protocol (MCP) server for integrating with Goodday project manag
 - **get_user_assigned_tasks**: Get tasks assigned to a specific user
 - **get_user_action_required_tasks**: Get action-required tasks for a user
 - **get_task**: Get detailed information about a specific task
+- **get_task_details**: Get comprehensive task details including subtasks, custom fields, and full metadata
+- **get_task_messages**: Retrieve all messages/comments for a specific task
 - **create_task**: Create new tasks with full customization (subtasks, assignments, dates, priorities)
 - **update_task_status**: Update task status with optional comments
 - **add_task_comment**: Add comments to tasks
 
+### Sprint Management
+- **get_goodday_sprint_tasks**: Get tasks from specific sprints by project name and sprint name/number
+- **get_goodday_sprint_summary**: Generate comprehensive sprint summaries with task details, status distribution, and key metrics
+
 ### User Management
 - **get_users**: Retrieve list of organization users
 - **get_user**: Get detailed information about a specific user
+
+### Smart Query & Search
+- **get_goodday_smart_query**: Natural language interface for common project management queries
+- **search_goodday_tasks**: Semantic search across tasks using VectorDB backend
+- **search_project_documents**: Search for documents within specific projects
+- **get_document_content**: Retrieve full content of specific documents
 
 ## OpenWebUI Integration
 
 This package also includes an OpenWebUI tool that provides a complete interface for Goodday project management directly in chat interfaces. The OpenWebUI tool includes:
 
 ### Features
-- **Project Management**: Get projects and project tasks
-- **Sprint Management**: Get tasks from specific sprints by name/number
-- **User Management**: Get tasks assigned to specific users
-- **Smart Query**: Natural language interface for common requests
-- **Search**: Semantic search across tasks using VectorDB backend
-- **Task Details**: Get detailed task information and messages
+- **Project Management**: Get projects, project tasks, and project details
+- **Sprint Management**: Get tasks from specific sprints by name/number, comprehensive sprint summaries
+- **User Management**: Get tasks assigned to specific users, user details
+- **Task Details**: Get comprehensive task information including subtasks, custom fields, and metadata
+- **Task Messages**: Retrieve all messages and comments for tasks
+- **Smart Query**: Natural language interface for common project management requests
+- **Semantic Search**: Search across tasks using VectorDB backend with embeddings
+- **Document Management**: Search project documents and retrieve document content
+- **Advanced Filtering**: Support for archived projects, closed tasks, subfolders, and more
 
 ### Setup
 1. Copy `openwebui/goodday_openwebui_complete_tool.py` to your OpenWebUI tools directory
@@ -299,6 +314,15 @@ For issues related to:
 - **MCP Protocol**: Refer to [MCP documentation](https://modelcontextprotocol.io/)
 
 ## Changelog
+
+### v1.1.0 (Current)
+- **Enhanced Task Management**: Added `get_task_details` and `get_task_messages` for comprehensive task information
+- **Sprint Management**: Added `get_goodday_sprint_tasks` and `get_goodday_sprint_summary` for sprint tracking
+- **Smart Query Interface**: Added `get_goodday_smart_query` for natural language project queries
+- **Semantic Search**: Added `search_goodday_tasks` with VectorDB integration for intelligent task search
+- **Document Management**: Added `search_project_documents` and `get_document_content` for document handling
+- **Improved Error Handling**: Enhanced error messages and status reporting
+- **Advanced Filtering**: Support for archived projects, closed tasks, and subfolder inclusion
 
 ### v1.0.0
 - Initial release
