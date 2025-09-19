@@ -12,7 +12,7 @@ mcp = FastMCP("goodday-mcp")
 GOODDAY_API_BASE = "https://api.goodday.work/2.0"
 USER_AGENT = "goodday-mcp/1.1.0"
 
-async def make_goodday_request(endpoint: str, method: str = "GET", data: dict = None) -> dict[str, Any] | list[Any] | None:
+async def make_goodday_request(endpoint: str, method: str = "GET", data: dict = None, subfolders: bool = True) -> dict[str, Any] | list[Any] | None:
     """Make a request to the Goodday API with proper error handling."""
     api_token = os.getenv("GOODDAY_API_TOKEN")
     if not api_token:
@@ -23,6 +23,14 @@ async def make_goodday_request(endpoint: str, method: str = "GET", data: dict = 
         "gd-api-token": api_token,
         "Content-Type": "application/json"
     }
+    
+    # Automatically add subfolders=true for project task and document endpoints if not already present
+    if subfolders and endpoint.startswith("project/") and ("/tasks" in endpoint or "/documents" in endpoint):
+        if "?" in endpoint:
+            if "subfolders=" not in endpoint:
+                endpoint += "&subfolders=true"
+        else:
+            endpoint += "?subfolders=true"
     
     url = f"{GOODDAY_API_BASE}/{endpoint.lstrip('/')}"
     
@@ -38,19 +46,50 @@ async def make_goodday_request(endpoint: str, method: str = "GET", data: dict = 
                 response = await client.get(url, headers=headers, timeout=30.0)
 
             response.raise_for_status()
-
-            try:
-                return response.json()
-            except ValueError:
-                # JSON decoding failed, return raw text as fallback
-                return {"error": "Invalid JSON", "raw_response": response.text}
+            return response.json()
 
         except httpx.HTTPStatusError as e:
-            return {"error": f"HTTP error {e.response.status_code}: {e.response.text}"}
+            raise Exception(f"HTTP error {e.response.status_code}: {e.response.text}")
         except httpx.RequestError as e:
-            return {"error": f"Request error: {str(e)}"}
+            raise Exception(f"Request error: {str(e)}")
         except Exception as e:
-            return {"error": f"Unexpected error: {str(e)}"}
+            raise Exception(f"Unexpected error: {str(e)}")
+
+async def make_search_request(method: str = "GET", params: dict = None) -> dict:
+    """Make a request to the search API with bearer token authentication."""
+    search_url = os.getenv("GOODDAY_SEARCH_URL", "")
+    bearer_token = os.getenv("GOODDAY_SEARCH_BEARER_TOKEN", "")
+    
+    if not bearer_token:
+        raise ValueError("GOODDAY_SEARCH_BEARER_TOKEN environment variable is required for search API")
+    
+    if not search_url:
+        raise ValueError("GOODDAY_SEARCH_URL environment variable is required for search API")
+    
+    headers = {
+        "User-Agent": USER_AGENT,
+        "Authorization": f"Bearer {bearer_token}",
+        "Content-Type": "application/json"
+    }
+    
+    url = str(search_url).strip()
+    
+    async with httpx.AsyncClient() as client:
+        try:
+            if method.upper() == "GET":
+                response = await client.get(url, headers=headers, params=params, timeout=30.0)
+            else:
+                response = await client.request(method.upper(), url, headers=headers, params=params, timeout=30.0)
+            
+            response.raise_for_status()
+            return response.json()
+        
+        except httpx.HTTPStatusError as e:
+            raise Exception(f"Search API HTTP error {e.response.status_code}: {e.response.text}")
+        except httpx.RequestError as e:
+            raise Exception(f"Search API request error: {str(e)}")
+        except Exception as e:
+            raise Exception(f"Search API unexpected error: {str(e)}")
 
 def format_task(task: dict) -> str:
     """Format a task into a readable string with safe checks."""
@@ -60,20 +99,17 @@ def format_task(task: dict) -> str:
     # Defensive defaults in case nested keys are not dicts
     status = task.get('status') if isinstance(task.get('status'), dict) else {}
     project = task.get('project') if isinstance(task.get('project'), dict) else {}
-    assigned_user = task.get('assignedToUser') if isinstance(task.get('assignedToUser'), dict) else {}
 
     return f"""
-Task ID: {task.get('id', 'N/A')}
-Title: {task.get('title', 'N/A')}
-Status: {status.get('name', 'N/A')}
-Project: {project.get('name', 'N/A')}
-Assigned To: {assigned_user.get('name', 'Unassigned')}
-Priority: {task.get('priority', 'N/A')}
-Start Date: {task.get('startDate', 'N/A')}
-End Date: {task.get('endDate', 'N/A')}
-Deadline: {task.get('deadline', 'N/A')}
-Progress: {task.get('progress', 0)}%
-Description: {task.get('message', 'No description')}
+**Task ID:** {task.get('shortId', 'N/A')}
+**Title:** {task.get('name', 'N/A')}
+**Status:** {status.get('name', 'N/A')}
+**Project:** {project.get('name', 'N/A')}
+**Assigned To:** {task.get('assignedToUserId', 'N/A')}
+**Priority:** {task.get('priority', 'N/A')}
+**Start Date:** {task.get('startDate', 'N/A')}
+**End Date:** {task.get('endDate', 'N/A')}
+**Description:** {task.get('message', 'No description')}
 """.strip()
 
 def format_project(project: dict) -> str:
@@ -1039,6 +1075,153 @@ async def get_goodday_smart_query(query: str) -> str:
             return "Please specify a user name for action required tasks query."
     else:
         return f"Query not recognized. Try queries like:\n- 'show me all projects'\n- 'show me all users'\n- 'show tasks assigned to [user]'\n- 'show action required tasks for [user]'"
+
+# Vector Search Tool
+@mcp.tool()
+async def search_goodday_tasks(
+    query: str, 
+    limit: int = 10, 
+    project_name: Optional[str] = None, 
+    user_name: Optional[str] = None,
+    include_closed: bool = False
+) -> str:
+    """Search for tasks using vector similarity search with optional filters.
+
+    Args:
+        query: Search query (natural language)
+        limit: Maximum number of results to return (default: 10, max: 50)
+        project_name: Optional project name filter (case-insensitive partial match)
+        user_name: Optional user name/email filter for assigned tasks
+        include_closed: Whether to include closed/completed tasks (default: False)
+    """
+    # Validate limit
+    if limit > 50:
+        limit = 50
+    elif limit < 1:
+        limit = 1
+
+    # Build search parameters
+    search_params = {
+        "query": query,
+        "limit": limit,
+        "include_closed": include_closed
+    }
+
+    # Add optional filters
+    if project_name:
+        search_params["project_name"] = project_name
+    if user_name:
+        search_params["user_name"] = user_name
+
+    try:
+        # Make search request
+        search_results = await make_search_request("GET", search_params)
+        
+        if not search_results:
+            return "No results found for your search query."
+        
+        if isinstance(search_results, dict) and "error" in search_results:
+            return f"Search error: {search_results.get('error', 'Unknown error')}"
+        
+        # Handle different response formats
+        results = []
+        if isinstance(search_results, dict):
+            if "results" in search_results:
+                results = search_results["results"]
+            elif "tasks" in search_results:
+                results = search_results["tasks"]
+            else:
+                # If it's a single result wrapped in a dict
+                results = [search_results]
+        elif isinstance(search_results, list):
+            results = search_results
+        else:
+            return f"Unexpected search results format: {type(search_results)}"
+
+        if not results:
+            return "No tasks found matching your search criteria."
+
+        # Get user mapping for display
+        user_id_to_name = await get_user_mapping()
+        
+        def user_display(user_id):
+            if not user_id:
+                return "Unassigned"
+            name = user_id_to_name.get(user_id)
+            return name if name else f"User {user_id}"
+
+        # Format results
+        formatted_results = []
+        for i, task in enumerate(results, 1):
+            if not isinstance(task, dict):
+                continue
+
+            # Extract task information
+            task_id = task.get("shortId", task.get("id", "N/A"))
+            task_name = task.get("name", "No title")
+            
+            # Handle status information
+            status = task.get("status", {})
+            if isinstance(status, dict):
+                status_name = status.get("name", "Unknown")
+            else:
+                status_name = str(status) if status else "Unknown"
+            
+            # Handle project information
+            project = task.get("project", {})
+            if isinstance(project, dict):
+                project_name = project.get("name", "Unknown Project")
+            else:
+                project_name = str(project) if project else "Unknown Project"
+            
+            # Handle assigned user
+            assigned_user_id = task.get("assignedToUserId")
+            assigned_user = user_display(assigned_user_id)
+            
+            # Handle priority
+            priority = task.get("priority", "N/A")
+            
+            # Handle dates
+            start_date = format_timestamp_ist(task.get("startDate")) if task.get("startDate") else "N/A"
+            end_date = format_timestamp_ist(task.get("endDate")) if task.get("endDate") else "N/A"
+            
+            # Handle description/message
+            description = task.get("message", task.get("description", "No description"))
+            
+            # Handle similarity score if available
+            score_info = ""
+            if "score" in task:
+                score_info = f" (Similarity: {task['score']:.3f})"
+            elif "_score" in task:
+                score_info = f" (Similarity: {task['_score']:.3f})"
+
+            formatted_result = f"""
+**{i}. {task_id}**: {task_name}{score_info}
+- **Project**: {project_name}
+- **Status**: {status_name}
+- **Assigned To**: {assigned_user}
+- **Priority**: {priority}
+- **Start Date**: {start_date}
+- **End Date**: {end_date}
+- **Description**: {description[:200]}{'...' if len(description) > 200 else ''}
+""".strip()
+            formatted_results.append(formatted_result)
+
+        result_text = "\n---\n".join(formatted_results)
+        filter_info = []
+        if project_name:
+            filter_info.append(f"Project: {project_name}")
+        if user_name:
+            filter_info.append(f"User: {user_name}")
+        if include_closed:
+            filter_info.append("Including closed tasks")
+        
+        filter_text = f" (Filters: {', '.join(filter_info)})" if filter_info else ""
+        
+        return f"**Search Results for '{query}'{filter_text}:**\nFound {len(results)} result(s)\n\n{result_text}"
+
+    except Exception as e:
+        return f"Search error: {str(e)}"
 
 # Document Management Tools
 @mcp.tool()
