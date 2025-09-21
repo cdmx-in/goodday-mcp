@@ -778,6 +778,9 @@ async def get_task_messages(task_short_id: str, project_name: Optional[str] = No
         task_short_id: The short ID of the task (e.g., RAD-434)
         project_name: Optional project name for disambiguation
     """
+    task_id = None
+    found_in_project = None
+    
     # If project name is provided, use it to find the project
     if project_name:
         matched_project, available_projects = await find_project_by_name(project_name)
@@ -785,14 +788,23 @@ async def get_task_messages(task_short_id: str, project_name: Optional[str] = No
             return f"Project '{project_name}' not found. Available projects: {', '.join(available_projects[:10])}{'...' if len(available_projects) > 10 else ''}"
         project_id = matched_project.get("id")
         found_in_project = matched_project.get("name")
+        
+        # Find the task in the specified project
+        tasks_data = await make_goodday_request(f"project/{project_id}/tasks")
+        if isinstance(tasks_data, list):
+            for task in tasks_data:
+                if isinstance(task, dict) and task.get("shortId") == task_short_id:
+                    task_id = task.get("id")
+                    break
+        
+        if not task_id:
+            return f"Task with short ID '{task_short_id}' not found in project '{found_in_project}'."
     else:
         # Search across all projects
         projects_data = await make_goodday_request("projects")
         if not projects_data or not isinstance(projects_data, list):
             return "Unable to fetch projects."
         
-        task_id = None
-        found_in_project = None
         for proj in projects_data:
             if isinstance(proj, dict):
                 proj_id = proj.get("id")
